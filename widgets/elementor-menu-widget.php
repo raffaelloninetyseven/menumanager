@@ -36,9 +36,10 @@ class MenuManager_Elementor_Widget extends \Elementor\Widget_Base {
             [
                 'label' => 'Modalità Visualizzazione',
                 'type' => \Elementor\Controls_Manager::SELECT,
-                'default' => 'flipbook',
+                'default' => 'single',
                 'options' => [
-                    'flipbook' => 'Flipbook Sfogliabile',
+                    'single' => 'Pagina Singola',
+                    'double' => 'Due Pagine Affiancate',
                     'embed' => 'PDF Incorporato',
                     'download' => 'Solo Download',
                 ],
@@ -55,20 +56,23 @@ class MenuManager_Elementor_Widget extends \Elementor\Widget_Base {
         );
         
         $this->add_control(
-            'fallback_text',
+            'show_controls',
             [
-                'label' => 'Testo quando nessun menu è disponibile',
-                'type' => \Elementor\Controls_Manager::TEXT,
-                'default' => 'Menu non disponibile al momento',
+                'label' => 'Mostra Controlli',
+                'type' => \Elementor\Controls_Manager::SWITCHER,
+                'default' => 'yes',
+                'condition' => [
+                    'display_mode' => ['single', 'double'],
+                ],
             ]
         );
         
         $this->end_controls_section();
         
         $this->start_controls_section(
-            'style_section',
+            'style_container',
             [
-                'label' => 'Stile',
+                'label' => 'Container',
                 'tab' => \Elementor\Controls_Manager::TAB_STYLE,
             ]
         );
@@ -81,13 +85,13 @@ class MenuManager_Elementor_Widget extends \Elementor\Widget_Base {
                 'size_units' => ['px', 'vh'],
                 'range' => [
                     'px' => [
-                        'min' => 300,
-                        'max' => 1000,
+                        'min' => 400,
+                        'max' => 1200,
                     ],
                 ],
                 'default' => [
                     'unit' => 'px',
-                    'size' => 600,
+                    'size' => 700,
                 ],
                 'selectors' => [
                     '{{WRAPPER}} .menu-viewer-container' => 'height: {{SIZE}}{{UNIT}};',
@@ -96,13 +100,13 @@ class MenuManager_Elementor_Widget extends \Elementor\Widget_Base {
         );
         
         $this->add_control(
-            'background_color',
+            'container_bg',
             [
-                'label' => 'Colore Sfondo',
+                'label' => 'Sfondo Container',
                 'type' => \Elementor\Controls_Manager::COLOR,
-                'default' => '#f8f9fa',
+                'default' => '#f8fafc',
                 'selectors' => [
-                    '{{WRAPPER}} .menu-viewer-container' => 'background-color: {{VALUE}};',
+                    '{{WRAPPER}} .menu-flipbook-container' => 'background-color: {{VALUE}};',
                 ],
             ]
         );
@@ -115,8 +119,11 @@ class MenuManager_Elementor_Widget extends \Elementor\Widget_Base {
                 'range' => [
                     'px' => [
                         'min' => 0,
-                        'max' => 50,
+                        'max' => 30,
                     ],
+                ],
+                'default' => [
+                    'size' => 12,
                 ],
                 'selectors' => [
                     '{{WRAPPER}} .menu-viewer-container' => 'border-radius: {{SIZE}}px;',
@@ -135,51 +142,99 @@ class MenuManager_Elementor_Widget extends \Elementor\Widget_Base {
         $this->end_controls_section();
         
         $this->start_controls_section(
-            'controls_style_section',
+            'style_controls',
             [
                 'label' => 'Controlli',
                 'tab' => \Elementor\Controls_Manager::TAB_STYLE,
                 'condition' => [
-                    'display_mode' => 'flipbook',
-                ],
-            ]
-        );
-        
-        $this->add_control(
-            'show_controls',
-            [
-                'label' => 'Mostra Controlli',
-                'type' => \Elementor\Controls_Manager::SWITCHER,
-                'default' => 'yes',
-            ]
-        );
-        
-        $this->add_control(
-            'controls_color',
-            [
-                'label' => 'Colore Controlli',
-                'type' => \Elementor\Controls_Manager::COLOR,
-                'default' => '#333',
-                'selectors' => [
-                    '{{WRAPPER}} .menu-controls button' => 'color: {{VALUE}};',
-                ],
-                'condition' => [
                     'show_controls' => 'yes',
+                    'display_mode' => ['single', 'double'],
                 ],
             ]
         );
         
         $this->add_control(
-            'controls_bg_color',
+            'controls_bg',
             [
                 'label' => 'Sfondo Controlli',
                 'type' => \Elementor\Controls_Manager::COLOR,
-                'default' => '#fff',
+                'default' => '#ffffff',
                 'selectors' => [
-                    '{{WRAPPER}} .menu-controls button' => 'background-color: {{VALUE}};',
+                    '{{WRAPPER}} .menu-controls' => 'background-color: {{VALUE}};',
                 ],
-                'condition' => [
-                    'show_controls' => 'yes',
+            ]
+        );
+        
+        $this->add_control(
+            'controls_text_color',
+            [
+                'label' => 'Colore Testo',
+                'type' => \Elementor\Controls_Manager::COLOR,
+                'default' => '#374151',
+                'selectors' => [
+                    '{{WRAPPER}} .page-info' => 'color: {{VALUE}};',
+                ],
+            ]
+        );
+        
+        $this->add_control(
+            'button_bg',
+            [
+                'label' => 'Sfondo Pulsanti',
+                'type' => \Elementor\Controls_Manager::COLOR,
+                'default' => '#ffffff',
+                'selectors' => [
+                    '{{WRAPPER}} .control-btn' => 'background-color: {{VALUE}};',
+                ],
+            ]
+        );
+        
+        $this->add_control(
+            'button_color',
+            [
+                'label' => 'Colore Pulsanti',
+                'type' => \Elementor\Controls_Manager::COLOR,
+                'default' => '#64748b',
+                'selectors' => [
+                    '{{WRAPPER}} .control-btn' => 'color: {{VALUE}};',
+                ],
+            ]
+        );
+        
+        $this->add_control(
+            'button_border',
+            [
+                'label' => 'Bordo Pulsanti',
+                'type' => \Elementor\Controls_Manager::COLOR,
+                'default' => '#e2e8f0',
+                'selectors' => [
+                    '{{WRAPPER}} .control-btn' => 'border-color: {{VALUE}};',
+                ],
+            ]
+        );
+        
+        $this->add_control(
+            'primary_color',
+            [
+                'label' => 'Colore Primario',
+                'type' => \Elementor\Controls_Manager::COLOR,
+                'default' => '#2563eb',
+                'selectors' => [
+                    '{{WRAPPER}} .page-progress' => 'background-color: {{VALUE}};',
+                    '{{WRAPPER}} .page-slider::-webkit-slider-thumb' => 'background-color: {{VALUE}};',
+                ],
+            ]
+        );
+        
+        $this->add_control(
+            'slider_track_color',
+            [
+                'label' => 'Colore Track Slider',
+                'type' => \Elementor\Controls_Manager::COLOR,
+                'default' => '#e2e8f0',
+                'selectors' => [
+                    '{{WRAPPER}} .page-slider' => 'background-color: {{VALUE}};',
+                    '{{WRAPPER}} .page-progress-track' => 'background-color: {{VALUE}};',
                 ],
             ]
         );
@@ -202,8 +257,9 @@ class MenuManager_Elementor_Widget extends \Elementor\Widget_Base {
             echo '<div class="menu-viewer-container" data-mode="' . esc_attr($settings['display_mode']) . '">';
             
             switch ($settings['display_mode']) {
-                case 'flipbook':
-                    $this->render_flipbook($active_menu, $settings);
+                case 'single':
+                case 'double':
+                    $this->render_viewer($active_menu, $settings);
                     break;
                 case 'embed':
                     $this->render_embed($active_menu);
@@ -214,113 +270,72 @@ class MenuManager_Elementor_Widget extends \Elementor\Widget_Base {
             }
             
             echo '</div>';
-            
-            // Debug info (rimuovi in produzione)
-            if (current_user_can('administrator')) {
-                echo '<div style="margin-top: 10px; padding: 10px; background: #f0f0f0; font-size: 12px;">';
-                echo 'Debug: Menu ID=' . $active_menu->id . ', PDF URL=' . $active_menu->pdf_url;
-                echo '</div>';
-            }
         } else {
             echo '<div class="no-menu-message">';
-            echo '<p>' . esc_html($settings['fallback_text']) . '</p>';
-            if (current_user_can('administrator')) {
-                echo '<p><small>Debug: ' . ($active_menu ? 'Menu trovato ma senza PDF' : 'Nessun menu attivo trovato') . '</small></p>';
-            }
+            echo '<div class="no-menu-icon">📄</div>';
+            echo '<p>Menu non disponibile al momento</p>';
             echo '</div>';
         }
         
         echo '</div>';
     }
     
-    private function render_flipbook($menu, $settings) {
+    private function render_viewer($menu, $settings) {
         $pdf_url = esc_url($menu->pdf_url);
-        $unique_id = uniqid();
+        $unique_id = uniqid('menu_');
+        $is_double = $settings['display_mode'] === 'double';
         
-        echo '<div id="menu-flipbook-' . $unique_id . '" class="menu-flipbook-container" data-pdf="' . $pdf_url . '">';
-        echo '<div class="loading-spinner">Caricamento menu...</div>';
+        echo '<div class="pdf-viewer-wrapper">';
+        echo '<div id="' . $unique_id . '" class="menu-flipbook-container" data-pdf="' . $pdf_url . '">';
+        echo '<div class="loading-container">';
+        echo '<div class="loading-spinner"></div>';
+        echo '<div class="loading-text">Caricamento menu...</div>';
+        echo '</div>';
         echo '</div>';
         
         if ($settings['show_controls'] === 'yes') {
             echo '<div class="menu-controls">';
-            echo '<button class="control-btn prev-page">‹ Precedente</button>';
-            echo '<span class="page-info">Pagina <span class="current-page">1</span> di <span class="total-pages">1</span></span>';
-            echo '<button class="control-btn next-page">Successiva ›</button>';
-            echo '<button class="control-btn zoom-in">+</button>';
-            echo '<button class="control-btn zoom-out">-</button>';
-            echo '<button class="control-btn fullscreen">⛶</button>';
+            echo '<button class="control-btn prev-page" title="Precedente">';
+            echo '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>';
+            echo '</button>';
+            
+            echo '<div class="controls-center">';
+            echo '<div class="page-info">';
+            echo '<span class="current-page">1</span>';
+            if ($is_double) {
+                echo '<span class="page-separator">-</span>';
+                echo '<span class="current-page-end">2</span>';
+            }
+            echo '<span class="page-divider"> / </span>';
+            echo '<span class="total-pages">1</span>';
+            echo '</div>';
+            echo '<div class="slider-container">';
+            echo '<input type="range" class="page-slider" min="1" max="1" value="1" step="1">';
+            echo '<div class="page-progress-track"><div class="page-progress"></div></div>';
+            echo '</div>';
+            echo '</div>';
+            
+            echo '<button class="control-btn next-page" title="Successiva">';
+            echo '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8.59 16.59L10 18l6-6-6-6-1.41 1.41L13.17 12z"/></svg>';
+            echo '</button>';
             echo '</div>';
         }
+        echo '</div>';
         
-        // Script inline per questo specifico widget
-        $unique_id = uniqid();
         echo '<script type="text/javascript">
         jQuery(document).ready(function($) {
-            const container = $("#menu-flipbook-' . $unique_id . '").closest(".menu-viewer-container");
+            const container = $("#' . $unique_id . '").closest(".menu-viewer-container");
             const pdfUrl = "' . $pdf_url . '";
+            const isDouble = ' . ($is_double ? 'true' : 'false') . ';
             
-            function initWidget() {
-                if (typeof window.loadMenuPDF === "function") {
-                    window.loadMenuPDF(pdfUrl, container);
-                } else if (typeof pdfjsLib !== "undefined") {
-                    // Fallback: carica direttamente se la funzione globale non è disponibile
-                    loadPDFDirect(pdfUrl, container);
-                } else {
-                    container.find(".loading-spinner").text("Errore: PDF.js non disponibile");
-                }
-            }
-            
-            function loadPDFDirect(pdfUrl, container) {
-                if (typeof pdfjsLib === "undefined") {
-                    container.find(".loading-spinner").text("Errore: PDF.js non caricato");
-                    return;
-                }
-                
-                pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.worker.min.js";
-                
-                container.find(".loading-spinner").text("Caricamento PDF...");
-                
-                pdfjsLib.getDocument(pdfUrl).promise.then(function(pdf) {
-                    const totalPages = pdf.numPages;
-                    const flipbook = container.find(".menu-flipbook-container");
-                    
-                    // Pulisce il container
-                    flipbook.empty();
-                    
-                    // Carica prima pagina
-                    pdf.getPage(1).then(function(page) {
-                        const viewport = page.getViewport({ scale: 1.5 });
-                        const canvas = document.createElement("canvas");
-                        const context = canvas.getContext("2d");
-                        
-                        canvas.height = viewport.height;
-                        canvas.width = viewport.width;
-                        canvas.style.width = "100%";
-                        canvas.style.height = "100%";
-                        canvas.style.objectFit = "contain";
-                        
-                        flipbook.append(canvas);
-                        
-                        page.render({
-                            canvasContext: context,
-                            viewport: viewport
-                        }).promise.then(function() {
-                            container.find(".loading-spinner").hide();
-                            container.find(".current-page").text("1");
-                            container.find(".total-pages").text(totalPages);
-                        });
-                    });
-                }).catch(function(error) {
-                    console.error("Errore caricamento PDF:", error);
-                    container.find(".loading-spinner").text("Errore nel caricamento: " + error.message);
-                });
-            }
-            
-            // Prova a inizializzare, altrimenti aspetta
-            if (document.readyState === "complete") {
-                initWidget();
+            if (typeof window.initMenuViewer === "function") {
+                window.initMenuViewer(container, pdfUrl, isDouble);
             } else {
-                $(window).on("load", initWidget);
+                setTimeout(() => {
+                    if (typeof window.initMenuViewer === "function") {
+                        window.initMenuViewer(container, pdfUrl, isDouble);
+                    }
+                }, 500);
             }
         });
         </script>';
@@ -330,16 +345,22 @@ class MenuManager_Elementor_Widget extends \Elementor\Widget_Base {
         $pdf_url = esc_url($menu->pdf_url);
         echo '<object data="' . $pdf_url . '" type="application/pdf" width="100%" height="100%">';
         echo '<p>Il tuo browser non supporta la visualizzazione PDF. ';
-        echo '<a href="' . $pdf_url . '" target="_blank">Clicca qui per scaricare il PDF</a></p>';
+        echo '<a href="' . $pdf_url . '" target="_blank">Clicca qui per aprire il PDF</a></p>';
         echo '</object>';
     }
     
     private function render_download($menu) {
         echo '<div class="download-menu">';
+        echo '<div class="download-content">';
+        echo '<div class="download-icon">📋</div>';
+        echo '<h4>Scarica il Menu</h4>';
         echo '<a href="' . esc_url($menu->pdf_url) . '" download class="download-btn">';
-        echo '<span class="download-icon">⬇</span>';
-        echo 'Scarica Menu';
+        echo '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">';
+        echo '<path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>';
+        echo '</svg>';
+        echo 'Scarica Menu PDF';
         echo '</a>';
+        echo '</div>';
         echo '</div>';
     }
 }

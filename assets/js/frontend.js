@@ -1,7 +1,6 @@
-// Assicuriamoci che le funzioni siano disponibili globalmente
 (function($) {
+    'use strict';
     
-    // Configurazione PDF.js non appena il script è caricato
     function initPDFJS() {
         if (typeof pdfjsLib !== 'undefined' && !window.pdfJSConfigured) {
             pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.worker.min.js';
@@ -9,280 +8,428 @@
         }
     }
     
-    // Prova a configurare immediatamente o aspetta il caricamento
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', initPDFJS);
     } else {
         initPDFJS();
     }
     
-    // Variabili globali per il controllo
-    let currentPage = 1;
-    let totalPages = 1;
-    let pdfPages = [];
-    let zoomLevel = 1;
-    let isDragging = false;
-    let startX, startY, scrollLeft, scrollTop;
-    let currentContainer = null;
+    let viewers = new Map();
     
-    // Funzione globale per caricare PDF (disponibile per i widget)
-    window.loadMenuPDF = function(pdfUrl, container) {
-        const loadingEl = container.find('.loading-spinner');
-        loadingEl.text('Caricamento PDF...');
-        
-        if (typeof pdfjsLib === 'undefined') {
-            loadingEl.text('Errore: PDF.js non disponibile');
-            return;
-        }
-        
-        // Assicurati che il worker sia configurato
-        if (!window.pdfJSConfigured) {
-            initPDFJS();
-        }
-        
-        pdfjsLib.getDocument(pdfUrl).promise.then(function(pdf) {
-            totalPages = pdf.numPages;
-            updatePageInfo(container);
+    class MenuViewer {
+        constructor(container, pdfUrl, isDouble = false) {
+            this.container = container;
+            this.pdfUrl = pdfUrl;
+            this.isDouble = isDouble;
+            this.pdf = null;
+            this.currentPage = 1;
+            this.totalPages = 1;
+            this.pages = [];
+            this.canvases = [];
             
-            const promises = [];
-            for (let i = 1; i <= totalPages; i++) {
-                promises.push(renderPage(pdf, i));
+            this.init();
+        }
+        
+        async init() {
+            try {
+                this.showLoading('Caricamento PDF...');
+                await this.loadPDF();
+                this.showLoading('Preparazione pagine...');
+                await this.preloadPages();
+                this.setupContainer();
+                this.bindEvents();
+                this.renderCurrentPages();
+                this.hideLoading();
+            } catch (error) {
+                console.error('Errore viewer:', error);
+                this.showError('Errore nel caricamento: ' + error.message);
+            }
+        }
+        
+        async loadPDF() {
+            if (typeof pdfjsLib === 'undefined') {
+                throw new Error('PDF.js non disponibile');
             }
             
-            Promise.all(promises).then(function(pages) {
-                pdfPages = pages;
-                initializeFlipbook(container);
-                loadingEl.hide();
-            });
-        }).catch(function(error) {
-            console.error('Errore nel caricamento PDF:', error);
-            loadingEl.text('Errore nel caricamento del menu: ' + error.message);
-        });
-    };
-    
-    function renderPage(pdf, pageNum) {
-        return pdf.getPage(pageNum).then(function(page) {
-            const viewport = page.getViewport({ scale: 1.5 });
+            if (!window.pdfJSConfigured) {
+                initPDFJS();
+            }
+            
+            try {
+                const loadingTask = pdfjsLib.getDocument({
+                    url: this.pdfUrl,
+                    cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/cmaps/',
+                    cMapPacked: true
+                });
+                
+                this.pdf = await loadingTask.promise;
+                this.totalPages = this.pdf.numPages;
+                
+                console.log('PDF caricato:', {
+                    url: this.pdfUrl,
+                    pages: this.totalPages
+                });
+            } catch (error) {
+                console.error('Errore caricamento PDF:', error);
+                throw new Error('Impossibile caricare il PDF: ' + error.message);
+            }
+        }
+        
+        showLoading(message) {
+            const flipbook = this.container.find('.menu-flipbook-container');
+            flipbook.html(`
+                <div class="loading-container">
+                    <div class="loading-spinner"></div>
+                    <div class="loading-text">${message}</div>
+                </div>
+            `);
+        }
+        
+        hideLoading() {
+            // Non rimuovere il loading qui, verrà rimosso da renderCurrentPages
+        }
+        
+        async preloadPages() {
+            const promises = [];
+            for (let i = 1; i <= this.totalPages; i++) {
+                promises.push(this.loadAndRenderPage(i));
+            }
+            await Promise.all(promises);
+        }
+        
+        async loadAndRenderPage(pageNum) {
+            try {
+                const page = await this.pdf.getPage(pageNum);
+                this.pages[pageNum] = page;
+                
+                const canvas = await this.renderPageToCanvas(page);
+                this.canvases[pageNum] = canvas;
+            } catch (error) {
+                console.error(`Errore caricamento pagina ${pageNum}:`, error);
+            }
+        }
+        
+        async renderPageToCanvas(page) {
+            const scale = 1.5;
+            const viewport = page.getViewport({ scale });
+            
             const canvas = document.createElement('canvas');
             const context = canvas.getContext('2d');
-            
             canvas.height = viewport.height;
             canvas.width = viewport.width;
             
-            return page.render({
+            await page.render({
                 canvasContext: context,
                 viewport: viewport
-            }).promise.then(function() {
-                return canvas.toDataURL();
-            });
-        });
-    }
-    
-    function initializeFlipbook(container) {
-        const flipbook = container.find('.menu-flipbook-container');
-        flipbook.empty();
+            }).promise;
+            
+            return canvas;
+        }
         
-        // Crea un contenitore per le pagine
-        const pagesContainer = $('<div class="pages-container"></div>');
-        flipbook.append(pagesContainer);
+        setupContainer() {
+            const flipbook = this.container.find('.menu-flipbook-container');
+            flipbook.empty();
+            
+            const pagesContainer = $('<div class="pages-container"></div>');
+            flipbook.append(pagesContainer);
+            
+            this.updateControls();
+        }
         
-        for (let i = 0; i < totalPages; i++) {
-            const pageDiv = $('<div class="menu-page" data-page="' + (i + 1) + '"></div>');
-            pageDiv.css({
-                'background-image': 'url(' + pdfPages[i] + ')',
-                'background-size': 'contain',
-                'background-repeat': 'no-repeat',
-                'background-position': 'center',
+        renderCurrentPages() {
+            const pagesContainer = this.container.find('.pages-container');
+            pagesContainer.empty();
+            
+            if (this.isDouble) {
+                this.renderDoublePages();
+            } else {
+                this.renderSinglePage();
+            }
+            
+            this.updateControls();
+        }
+        
+        renderSinglePage() {
+            const canvas = this.canvases[this.currentPage];
+            if (!canvas) return;
+            
+            const pageDiv = $('<div class="menu-page single"></div>');
+            const canvasClone = canvas.cloneNode(true);
+            $(canvasClone).css({
                 'width': '100%',
                 'height': '100%',
-                'position': 'absolute',
-                'top': '0',
-                'left': '0',
-                'display': i === 0 ? 'block' : 'none'
+                'object-fit': 'contain'
             });
-            pagesContainer.append(pageDiv);
+            
+            pageDiv.append(canvasClone);
+            this.container.find('.pages-container').append(pageDiv);
         }
         
-        currentPage = 1;
-        currentContainer = container;
-        updatePageInfo(container);
-        setupZoomAndPan(container);
-        bindControls(container);
-    }
-    
-    function setupZoomAndPan(container) {
-        const pagesContainer = container.find('.pages-container');
-        
-        pagesContainer.on('mousedown', function(e) {
-            if (zoomLevel > 1) {
-                isDragging = true;
-                startX = e.pageX;
-                startY = e.pageY;
-                scrollLeft = pagesContainer.scrollLeft();
-                scrollTop = pagesContainer.scrollTop();
-                pagesContainer.css('cursor', 'grabbing');
+        renderDoublePages() {
+            const pagesContainer = this.container.find('.pages-container');
+            
+            // Pagina sinistra
+            if (this.currentPage > 1) {
+                const leftCanvas = this.canvases[this.currentPage - 1];
+                if (leftCanvas) {
+                    const leftDiv = $('<div class="menu-page double-left"></div>');
+                    const leftClone = leftCanvas.cloneNode(true);
+                    $(leftClone).css({
+                        'width': '100%',
+                        'height': '100%',
+                        'object-fit': 'contain'
+                    });
+                    leftDiv.append(leftClone);
+                    pagesContainer.append(leftDiv);
+                }
             }
-        });
-        
-        $(document).on('mousemove', function(e) {
-            if (!isDragging) return;
-            e.preventDefault();
-            const x = e.pageX;
-            const y = e.pageY;
-            const walkX = (x - startX) * 2;
-            const walkY = (y - startY) * 2;
-            pagesContainer.scrollLeft(scrollLeft - walkX);
-            pagesContainer.scrollTop(scrollTop - walkY);
-        });
-        
-        $(document).on('mouseup', function() {
-            if (isDragging) {
-                isDragging = false;
-                container.find('.pages-container').css('cursor', zoomLevel > 1 ? 'grab' : 'default');
-            }
-        });
-        
-        pagesContainer.on('wheel', function(e) {
-            e.preventDefault();
-            if (e.originalEvent.deltaY < 0) {
-                zoomIn(container);
-            } else {
-                zoomOut(container);
-            }
-        });
-    }
-    
-    function bindControls(container) {
-        container.find('.prev-page').off('click').on('click', function() {
-            if (currentPage > 1) {
-                goToPage(currentPage - 1, container);
-            }
-        });
-        
-        container.find('.next-page').off('click').on('click', function() {
-            if (currentPage < totalPages) {
-                goToPage(currentPage + 1, container);
-            }
-        });
-        
-        container.find('.zoom-in').off('click').on('click', function() {
-            zoomIn(container);
-        });
-        
-        container.find('.zoom-out').off('click').on('click', function() {
-            zoomOut(container);
-        });
-        
-        container.find('.fullscreen').off('click').on('click', function() {
-            toggleFullscreen(container);
-        });
-    }
-    
-    function updatePageInfo(container) {
-        container.find('.current-page').text(currentPage);
-        container.find('.total-pages').text(totalPages);
-        
-        container.find('.prev-page').prop('disabled', currentPage <= 1);
-        container.find('.next-page').prop('disabled', currentPage >= totalPages);
-    }
-    
-    function zoomIn(container) {
-        if (zoomLevel < 3) {
-            zoomLevel += 0.2;
-            applyZoom(container);
-        }
-    }
-    
-    function zoomOut(container) {
-        if (zoomLevel > 0.5) {
-            zoomLevel -= 0.2;
-            applyZoom(container);
-        }
-    }
-    
-    function applyZoom(container) {
-        container.find('.menu-page').css('transform', 'scale(' + zoomLevel + ')');
-        container.find('.pages-container').css('cursor', zoomLevel > 1 ? 'grab' : 'default');
-    }
-    
-    function goToPage(pageNum, container) {
-        if (pageNum < 1 || pageNum > totalPages) return;
-        
-        container.find('.menu-page').hide();
-        container.find('.menu-page[data-page="' + pageNum + '"]').show();
-        
-        currentPage = pageNum;
-        updatePageInfo(container);
-    }
-    
-    function toggleFullscreen(container) {
-        const element = container.get(0);
-        
-        if (!document.fullscreenElement) {
-            if (element.requestFullscreen) {
-                element.requestFullscreen().catch(err => {
-                    console.log('Fullscreen non supportato:', err);
+            
+            // Pagina destra
+            const rightCanvas = this.canvases[this.currentPage];
+            if (rightCanvas) {
+                const rightDiv = $('<div class="menu-page double-right"></div>');
+                const rightClone = rightCanvas.cloneNode(true);
+                $(rightClone).css({
+                    'width': '100%',
+                    'height': '100%',
+                    'object-fit': 'contain'
                 });
+                rightDiv.append(rightClone);
+                pagesContainer.append(rightDiv);
             }
-        } else {
-            if (document.exitFullscreen) {
-                document.exitFullscreen();
+        }
+        
+        updateControls() {
+            const currentSpan = this.container.find('.current-page');
+            const currentEndSpan = this.container.find('.current-page-end');
+            const totalSpan = this.container.find('.total-pages');
+            const slider = this.container.find('.page-slider');
+            const progress = this.container.find('.page-progress');
+            const prevBtn = this.container.find('.prev-page');
+            const nextBtn = this.container.find('.next-page');
+            
+            if (this.isDouble) {
+                const leftPage = this.currentPage > 1 ? this.currentPage - 1 : this.currentPage;
+                const rightPage = this.currentPage;
+                
+                currentSpan.text(leftPage);
+                if (currentEndSpan.length && leftPage !== rightPage) {
+                    currentEndSpan.text(rightPage);
+                } else if (currentEndSpan.length) {
+                    currentEndSpan.text('');
+                }
+            } else {
+                currentSpan.text(this.currentPage);
             }
+            
+            totalSpan.text(this.totalPages);
+            
+            // Aggiorna slider
+            const maxSlider = this.isDouble ? Math.ceil(this.totalPages / 2) : this.totalPages;
+            const sliderValue = this.isDouble ? Math.ceil(this.currentPage / 2) : this.currentPage;
+            
+            slider.attr('max', maxSlider).val(sliderValue);
+            
+            // Aggiorna progress bar
+            const progressPercent = maxSlider > 1 ? ((sliderValue - 1) / (maxSlider - 1)) * 100 : 0;
+            progress.css('width', progressPercent + '%');
+            
+            // Aggiorna pulsanti
+            if (this.isDouble) {
+                prevBtn.prop('disabled', this.currentPage <= 2);
+                nextBtn.prop('disabled', this.currentPage >= this.totalPages);
+            } else {
+                prevBtn.prop('disabled', this.currentPage <= 1);
+                nextBtn.prop('disabled', this.currentPage >= this.totalPages);
+            }
+        }
+        
+        bindEvents() {
+            // Pulsanti navigazione
+            this.container.find('.prev-page').off('click').on('click', () => {
+                this.goToPreviousPage();
+            });
+            
+            this.container.find('.next-page').off('click').on('click', () => {
+                this.goToNextPage();
+            });
+            
+            // Slider
+            this.container.find('.page-slider').off('input change').on('input change', (e) => {
+                const value = parseInt($(e.target).val());
+                let targetPage;
+                
+                if (this.isDouble) {
+                    targetPage = (value - 1) * 2 + 2; // Pagina destra
+                    if (targetPage > this.totalPages) {
+                        targetPage = this.totalPages;
+                    }
+                } else {
+                    targetPage = value;
+                }
+                
+                this.goToPage(targetPage);
+            });
+            
+            // Touch/swipe support
+            let startX = 0;
+            let startY = 0;
+            
+            this.container.find('.pages-container').off('touchstart touchend')
+                .on('touchstart', (e) => {
+                    const touch = e.originalEvent.touches[0];
+                    startX = touch.clientX;
+                    startY = touch.clientY;
+                })
+                .on('touchend', (e) => {
+                    const touch = e.originalEvent.changedTouches[0];
+                    const endX = touch.clientX;
+                    const endY = touch.clientY;
+                    const diffX = startX - endX;
+                    const diffY = startY - endY;
+                    
+                    // Solo se lo swipe orizzontale è predominante
+                    if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 50) {
+                        if (diffX > 0) {
+                            this.goToNextPage();
+                        } else {
+                            this.goToPreviousPage();
+                        }
+                    }
+                });
+        }
+        
+        goToPage(pageNum) {
+            if (pageNum < 1 || pageNum > this.totalPages) return;
+            
+            this.currentPage = pageNum;
+            this.renderCurrentPages();
+        }
+        
+        goToNextPage() {
+            let nextPage;
+            
+            if (this.isDouble) {
+                nextPage = Math.min(this.totalPages, this.currentPage + 2);
+            } else {
+                nextPage = Math.min(this.totalPages, this.currentPage + 1);
+            }
+            
+            this.goToPage(nextPage);
+        }
+        
+        goToPreviousPage() {
+            let prevPage;
+            
+            if (this.isDouble) {
+                prevPage = Math.max(2, this.currentPage - 2);
+            } else {
+                prevPage = Math.max(1, this.currentPage - 1);
+            }
+            
+            this.goToPage(prevPage);
+        }
+        
+        showError(message) {
+            const flipbook = this.container.find('.menu-flipbook-container');
+            flipbook.html(`
+                <div class="loading-container">
+                    <div style="font-size: 48px; margin-bottom: 16px; color: #ef4444;">❌</div>
+                    <div class="loading-text">${message}</div>
+                </div>
+            `);
+        }
+        
+        destroy() {
+            this.container.find('.prev-page, .next-page, .page-slider').off();
+            this.container.find('.pages-container').off();
         }
     }
     
-    // Inizializzazione quando il DOM è pronto
+    // Funzione globale per inizializzare il viewer
+    window.initMenuViewer = function(container, pdfUrl, isDouble = false) {
+        const viewerId = container.attr('id') || 'viewer_' + Date.now();
+        
+        // Rimuovi viewer esistente
+        if (viewers.has(viewerId)) {
+            viewers.get(viewerId).destroy();
+            viewers.delete(viewerId);
+        }
+        
+        const viewer = new MenuViewer(container, pdfUrl, isDouble);
+        viewers.set(viewerId, viewer);
+        
+        return viewer;
+    };
+    
+    // Controlli da tastiera globali
+    $(document).on('keydown', function(e) {
+        const activeContainer = $('.menu-viewer-container:visible').first();
+        if (!activeContainer.length) return;
+        
+        const viewerId = activeContainer.attr('id') || 'viewer_' + Date.now();
+        const activeViewer = viewers.get(viewerId);
+        if (!activeViewer) return;
+        
+        switch(e.keyCode) {
+            case 37: // Freccia sinistra
+                e.preventDefault();
+                activeViewer.goToPreviousPage();
+                break;
+            case 39: // Freccia destra
+                e.preventDefault();
+                activeViewer.goToNextPage();
+                break;
+            case 32: // Spazio
+                e.preventDefault();
+                activeViewer.goToNextPage();
+                break;
+        }
+    });
+    
+    // Auto-inizializzazione per widget esistenti
     $(document).ready(function() {
-        
-        // Inizializza tutti i container flipbook esistenti
-        $('.menu-viewer-container[data-mode="flipbook"]').each(function() {
-            const container = $(this);
-            const flipbook = container.find('.menu-flipbook-container');
-            const pdfUrl = flipbook.data('pdf');
+        // Aspetta che PDF.js sia completamente caricato
+        function checkAndInit() {
+            if (typeof pdfjsLib === 'undefined') {
+                setTimeout(checkAndInit, 100);
+                return;
+            }
             
-            if (pdfUrl && typeof window.loadMenuPDF === 'function') {
-                window.loadMenuPDF(pdfUrl, container);
-            }
-        });
+            $('.menu-viewer-container[data-mode="single"], .menu-viewer-container[data-mode="double"]').each(function() {
+                const container = $(this);
+                const flipbook = container.find('.menu-flipbook-container');
+                const pdfUrl = flipbook.data('pdf');
+                const isDouble = container.data('mode') === 'double';
+                
+                if (pdfUrl) {
+                    console.log('Inizializzazione viewer:', {
+                        pdfUrl: pdfUrl,
+                        isDouble: isDouble,
+                        container: container.length
+                    });
+                    
+                    try {
+                        window.initMenuViewer(container, pdfUrl, isDouble);
+                    } catch (error) {
+                        console.error('Errore inizializzazione viewer:', error);
+                        
+                        // Fallback: mostra errore
+                        flipbook.html(`
+                            <div class="loading-container">
+                                <div style="font-size: 48px; margin-bottom: 16px; color: #ef4444;">❌</div>
+                                <div class="loading-text">Errore: ${error.message}</div>
+                                <div style="margin-top: 10px; font-size: 12px; opacity: 0.7;">
+                                    <a href="${pdfUrl}" target="_blank">Apri PDF direttamente</a>
+                                </div>
+                            </div>
+                        `);
+                    }
+                }
+            });
+        }
         
-        // Controlli da tastiera
-        $(document).on('keydown', function(e) {
-            if (!currentContainer) return;
-            
-            switch(e.keyCode) {
-                case 37: // Freccia sinistra
-                    currentContainer.find('.prev-page').click();
-                    break;
-                case 39: // Freccia destra
-                    currentContainer.find('.next-page').click();
-                    break;
-                case 187: // +
-                    if (e.ctrlKey) {
-                        e.preventDefault();
-                        zoomIn(currentContainer);
-                    }
-                    break;
-                case 189: // -
-                    if (e.ctrlKey) {
-                        e.preventDefault();
-                        zoomOut(currentContainer);
-                    }
-                    break;
-                case 70: // F
-                    if (e.ctrlKey) {
-                        e.preventDefault();
-                        toggleFullscreen(currentContainer);
-                    }
-                    break;
-            }
-        });
-        
-        // Gestione resize finestra
-        $(window).on('resize', function() {
-            if (currentContainer) {
-                applyZoom(currentContainer);
-            }
-        });
+        checkAndInit();
     });
     
 })(jQuery);

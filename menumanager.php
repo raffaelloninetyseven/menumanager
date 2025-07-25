@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Menu Manager
  * Description: Plugin per la gestione avanzata del menu ristorante con widget Elementor e visualizzazione PDF sfogliabile
- * Version: 0.3.2
+ * Version: 0.3.5
  * Author: SilverStudioDM
  */
 
