@@ -8,12 +8,6 @@
         }
     }
     
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initPDFJS);
-    } else {
-        initPDFJS();
-    }
-    
     let viewers = new Map();
     
     class MenuViewer {
@@ -26,11 +20,15 @@
             this.totalPages = 1;
             this.pages = [];
             this.canvases = [];
+            this.isLoading = false;
             
             this.init();
         }
         
         async init() {
+            if (this.isLoading) return;
+            this.isLoading = true;
+            
             try {
                 this.showLoading('Caricamento PDF...');
                 await this.loadPDF();
@@ -42,7 +40,9 @@
                 this.hideLoading();
             } catch (error) {
                 console.error('Errore viewer:', error);
-                this.showError('Errore nel caricamento: ' + error.message);
+                this.showError('Errore nel caricamento del PDF');
+            } finally {
+                this.isLoading = false;
             }
         }
         
@@ -51,27 +51,42 @@
                 throw new Error('PDF.js non disponibile');
             }
             
-            if (!window.pdfJSConfigured) {
-                initPDFJS();
-            }
+            initPDFJS();
             
             try {
+                console.log('Caricamento PDF:', this.pdfUrl);
+                
                 const loadingTask = pdfjsLib.getDocument({
                     url: this.pdfUrl,
                     cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/cmaps/',
-                    cMapPacked: true
+                    cMapPacked: true,
+                    disableAutoFetch: false,
+                    disableStream: false,
+                    disableRange: false
                 });
+                
+                loadingTask.onProgress = (progress) => {
+                    if (progress.total > 0) {
+                        const percent = Math.round((progress.loaded / progress.total) * 100);
+                        this.showLoading(`Caricamento PDF... ${percent}%`);
+                    }
+                };
                 
                 this.pdf = await loadingTask.promise;
                 this.totalPages = this.pdf.numPages;
                 
-                console.log('PDF caricato:', {
-                    url: this.pdfUrl,
-                    pages: this.totalPages
+                console.log('PDF caricato con successo:', {
+                    pages: this.totalPages,
+                    url: this.pdfUrl
                 });
+                
+                if (this.isDouble && this.currentPage === 1) {
+                    this.currentPage = 2;
+                }
+                
             } catch (error) {
                 console.error('Errore caricamento PDF:', error);
-                throw new Error('Impossibile caricare il PDF: ' + error.message);
+                throw new Error(`Impossibile caricare il PDF: ${error.message}`);
             }
         }
         
@@ -86,15 +101,22 @@
         }
         
         hideLoading() {
-            // Non rimuovere il loading qui, verrà rimosso da renderCurrentPages
+            // Il loading viene rimosso in setupContainer
         }
         
         async preloadPages() {
-            const promises = [];
+            console.log('Precaricamento pagine:', this.totalPages);
+            
             for (let i = 1; i <= this.totalPages; i++) {
-                promises.push(this.loadAndRenderPage(i));
+                try {
+                    this.showLoading(`Caricamento pagina ${i}/${this.totalPages}...`);
+                    await this.loadAndRenderPage(i);
+                } catch (error) {
+                    console.warn(`Errore pagina ${i}:`, error);
+                }
             }
-            await Promise.all(promises);
+            
+            console.log('Precaricamento completato');
         }
         
         async loadAndRenderPage(pageNum) {
@@ -104,26 +126,49 @@
                 
                 const canvas = await this.renderPageToCanvas(page);
                 this.canvases[pageNum] = canvas;
+                
+                return canvas;
             } catch (error) {
                 console.error(`Errore caricamento pagina ${pageNum}:`, error);
+                return null;
             }
         }
         
         async renderPageToCanvas(page) {
-            const scale = 1.5;
-            const viewport = page.getViewport({ scale });
-            
-            const canvas = document.createElement('canvas');
-            const context = canvas.getContext('2d');
-            canvas.height = viewport.height;
-            canvas.width = viewport.width;
-            
-            await page.render({
-                canvasContext: context,
-                viewport: viewport
-            }).promise;
-            
-            return canvas;
+            try {
+                const containerWidth = this.container.find('.menu-flipbook-container').width() || 800;
+                const containerHeight = this.container.find('.menu-flipbook-container').height() || 600;
+                
+                let scale = 1.5;
+                const viewport = page.getViewport({ scale: 1 });
+                const widthScale = (containerWidth - 40) / viewport.width;
+                const heightScale = (containerHeight - 120) / viewport.height;
+                scale = Math.min(widthScale, heightScale, 2.5);
+                
+                if (this.isDouble) {
+                    scale *= 0.8;
+                }
+                
+                const finalViewport = page.getViewport({ scale });
+                
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                canvas.height = finalViewport.height;
+                canvas.width = finalViewport.width;
+                
+                console.log(`Rendering pagina con scale: ${scale}, dimensioni: ${canvas.width}x${canvas.height}`);
+                
+                const renderContext = {
+                    canvasContext: context,
+                    viewport: finalViewport
+                };
+                
+                await page.render(renderContext).promise;
+                return canvas;
+            } catch (error) {
+                console.error('Errore rendering canvas:', error);
+                throw error;
+            }
         }
         
         setupContainer() {
@@ -132,12 +177,12 @@
             
             const pagesContainer = $('<div class="pages-container"></div>');
             flipbook.append(pagesContainer);
-            
-            this.updateControls();
         }
         
         renderCurrentPages() {
             const pagesContainer = this.container.find('.pages-container');
+            if (!pagesContainer.length) return;
+            
             pagesContainer.empty();
             
             if (this.isDouble) {
@@ -155,10 +200,13 @@
             
             const pageDiv = $('<div class="menu-page single"></div>');
             const canvasClone = canvas.cloneNode(true);
+            
             $(canvasClone).css({
-                'width': '100%',
-                'height': '100%',
-                'object-fit': 'contain'
+                'max-width': '100%',
+                'max-height': '100%',
+                'width': 'auto',
+                'height': 'auto',
+                'display': 'block'
             });
             
             pageDiv.append(canvasClone);
@@ -168,31 +216,31 @@
         renderDoublePages() {
             const pagesContainer = this.container.find('.pages-container');
             
-            // Pagina sinistra
             if (this.currentPage > 1) {
                 const leftCanvas = this.canvases[this.currentPage - 1];
                 if (leftCanvas) {
                     const leftDiv = $('<div class="menu-page double-left"></div>');
                     const leftClone = leftCanvas.cloneNode(true);
                     $(leftClone).css({
-                        'width': '100%',
-                        'height': '100%',
-                        'object-fit': 'contain'
+                        'max-width': '100%',
+                        'max-height': '100%',
+                        'width': 'auto',
+                        'height': 'auto'
                     });
                     leftDiv.append(leftClone);
                     pagesContainer.append(leftDiv);
                 }
             }
             
-            // Pagina destra
             const rightCanvas = this.canvases[this.currentPage];
             if (rightCanvas) {
                 const rightDiv = $('<div class="menu-page double-right"></div>');
                 const rightClone = rightCanvas.cloneNode(true);
                 $(rightClone).css({
-                    'width': '100%',
-                    'height': '100%',
-                    'object-fit': 'contain'
+                    'max-width': '100%',
+                    'max-height': '100%',
+                    'width': 'auto',
+                    'height': 'auto'
                 });
                 rightDiv.append(rightClone);
                 pagesContainer.append(rightDiv);
@@ -209,11 +257,11 @@
             const nextBtn = this.container.find('.next-page');
             
             if (this.isDouble) {
-                const leftPage = this.currentPage > 1 ? this.currentPage - 1 : this.currentPage;
+                const leftPage = this.currentPage > 1 ? this.currentPage - 1 : '';
                 const rightPage = this.currentPage;
                 
-                currentSpan.text(leftPage);
-                if (currentEndSpan.length && leftPage !== rightPage) {
+                currentSpan.text(leftPage || rightPage);
+                if (currentEndSpan.length && leftPage) {
                     currentEndSpan.text(rightPage);
                 } else if (currentEndSpan.length) {
                     currentEndSpan.text('');
@@ -224,17 +272,14 @@
             
             totalSpan.text(this.totalPages);
             
-            // Aggiorna slider
-            const maxSlider = this.isDouble ? Math.ceil(this.totalPages / 2) : this.totalPages;
+            const maxSlider = this.isDouble ? Math.ceil(this.totalPages / 2) + 1 : this.totalPages;
             const sliderValue = this.isDouble ? Math.ceil(this.currentPage / 2) : this.currentPage;
             
             slider.attr('max', maxSlider).val(sliderValue);
             
-            // Aggiorna progress bar
             const progressPercent = maxSlider > 1 ? ((sliderValue - 1) / (maxSlider - 1)) * 100 : 0;
-            progress.css('width', progressPercent + '%');
+            progress.css('width', Math.max(0, Math.min(100, progressPercent)) + '%');
             
-            // Aggiorna pulsanti
             if (this.isDouble) {
                 prevBtn.prop('disabled', this.currentPage <= 2);
                 nextBtn.prop('disabled', this.currentPage >= this.totalPages);
@@ -245,7 +290,6 @@
         }
         
         bindEvents() {
-            // Pulsanti navigazione
             this.container.find('.prev-page').off('click').on('click', () => {
                 this.goToPreviousPage();
             });
@@ -254,13 +298,12 @@
                 this.goToNextPage();
             });
             
-            // Slider
             this.container.find('.page-slider').off('input change').on('input change', (e) => {
                 const value = parseInt($(e.target).val());
                 let targetPage;
                 
                 if (this.isDouble) {
-                    targetPage = (value - 1) * 2 + 2; // Pagina destra
+                    targetPage = (value - 1) * 2 + 2;
                     if (targetPage > this.totalPages) {
                         targetPage = this.totalPages;
                     }
@@ -271,7 +314,10 @@
                 this.goToPage(targetPage);
             });
             
-            // Touch/swipe support
+            this.setupTouchEvents();
+        }
+        
+        setupTouchEvents() {
             let startX = 0;
             let startY = 0;
             
@@ -288,7 +334,6 @@
                     const diffX = startX - endX;
                     const diffY = startY - endY;
                     
-                    // Solo se lo swipe orizzontale è predominante
                     if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 50) {
                         if (diffX > 0) {
                             this.goToNextPage();
@@ -336,6 +381,9 @@
                 <div class="loading-container">
                     <div style="font-size: 48px; margin-bottom: 16px; color: #ef4444;">❌</div>
                     <div class="loading-text">${message}</div>
+                    <div style="margin-top: 10px; font-size: 12px; opacity: 0.7;">
+                        <a href="${this.pdfUrl}" target="_blank" style="color: #2563eb;">Apri PDF direttamente</a>
+                    </div>
                 </div>
             `);
         }
@@ -346,11 +394,9 @@
         }
     }
     
-    // Funzione globale per inizializzare il viewer
     window.initMenuViewer = function(container, pdfUrl, isDouble = false) {
         const viewerId = container.attr('id') || 'viewer_' + Date.now();
         
-        // Rimuovi viewer esistente
         if (viewers.has(viewerId)) {
             viewers.get(viewerId).destroy();
             viewers.delete(viewerId);
@@ -362,7 +408,6 @@
         return viewer;
     };
     
-    // Controlli da tastiera globali
     $(document).on('keydown', function(e) {
         const activeContainer = $('.menu-viewer-container:visible').first();
         if (!activeContainer.length) return;
@@ -372,29 +417,30 @@
         if (!activeViewer) return;
         
         switch(e.keyCode) {
-            case 37: // Freccia sinistra
+            case 37:
                 e.preventDefault();
                 activeViewer.goToPreviousPage();
                 break;
-            case 39: // Freccia destra
+            case 39:
                 e.preventDefault();
                 activeViewer.goToNextPage();
                 break;
-            case 32: // Spazio
+            case 32:
                 e.preventDefault();
                 activeViewer.goToNextPage();
                 break;
         }
     });
     
-    // Auto-inizializzazione per widget esistenti
     $(document).ready(function() {
-        // Aspetta che PDF.js sia completamente caricato
-        function checkAndInit() {
+        function waitForPDFJS() {
             if (typeof pdfjsLib === 'undefined') {
-                setTimeout(checkAndInit, 100);
+                setTimeout(waitForPDFJS, 100);
                 return;
             }
+            
+            console.log('PDF.js caricato, inizializzazione viewer...');
+            initPDFJS();
             
             $('.menu-viewer-container[data-mode="single"], .menu-viewer-container[data-mode="double"]').each(function() {
                 const container = $(this);
@@ -402,34 +448,44 @@
                 const pdfUrl = flipbook.data('pdf');
                 const isDouble = container.data('mode') === 'double';
                 
-                if (pdfUrl) {
-                    console.log('Inizializzazione viewer:', {
-                        pdfUrl: pdfUrl,
-                        isDouble: isDouble,
-                        container: container.length
-                    });
+                console.log('Trovato container:', {
+                    pdfUrl: pdfUrl,
+                    isDouble: isDouble,
+                    hasContainer: container.length > 0
+                });
+                
+                if (pdfUrl && !container.data('viewer-initialized')) {
+                    container.data('viewer-initialized', true);
                     
-                    try {
-                        window.initMenuViewer(container, pdfUrl, isDouble);
-                    } catch (error) {
-                        console.error('Errore inizializzazione viewer:', error);
-                        
-                        // Fallback: mostra errore
-                        flipbook.html(`
-                            <div class="loading-container">
-                                <div style="font-size: 48px; margin-bottom: 16px; color: #ef4444;">❌</div>
-                                <div class="loading-text">Errore: ${error.message}</div>
-                                <div style="margin-top: 10px; font-size: 12px; opacity: 0.7;">
-                                    <a href="${pdfUrl}" target="_blank">Apri PDF direttamente</a>
+                    setTimeout(() => {
+                        try {
+                            console.log('Inizializzazione viewer per:', pdfUrl);
+                            window.initMenuViewer(container, pdfUrl, isDouble);
+                        } catch (error) {
+                            console.error('Errore inizializzazione:', error);
+                            flipbook.html(`
+                                <div class="loading-container">
+                                    <div style="font-size: 48px; margin-bottom: 16px; color: #ef4444;">❌</div>
+                                    <div class="loading-text">Errore: ${error.message}</div>
+                                    <div style="margin-top: 10px; font-size: 12px; opacity: 0.7;">
+                                        <a href="${pdfUrl}" target="_blank" style="color: #2563eb;">Apri PDF direttamente</a>
+                                    </div>
                                 </div>
-                            </div>
-                        `);
-                    }
+                            `);
+                        }
+                    }, 500);
+                } else if (!pdfUrl) {
+                    console.warn('Nessun URL PDF trovato per il container');
+                    flipbook.html(`
+                        <div class="loading-container">
+                            <div class="loading-text">Nessun PDF configurato</div>
+                        </div>
+                    `);
                 }
             });
         }
         
-        checkAndInit();
+        waitForPDFJS();
     });
     
 })(jQuery);

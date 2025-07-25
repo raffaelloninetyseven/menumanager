@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Menu Manager
  * Description: Plugin per la gestione avanzata del menu ristorante con widget Elementor e visualizzazione PDF sfogliabile
- * Version: 0.3.5
+ * Version: 0.3.7
  * Author: SilverStudioDM
  */
 
@@ -40,7 +40,6 @@ class MenuManager {
         $this->create_tables();
         $this->create_upload_dir();
         
-        // Imposta valori di default per le impostazioni
         if (!get_option('menu_manager_settings')) {
             add_option('menu_manager_settings', array(
                 'allowed_roles' => array('administrator'),
@@ -106,7 +105,6 @@ class MenuManager {
         $settings = get_option('menu_manager_settings', array());
         $capability = isset($settings['menu_capability']) ? $settings['menu_capability'] : 'manage_options';
         
-        // Menu principale - Dashboard
         add_menu_page(
             'Menu Manager',
             'Menu Manager', 
@@ -117,7 +115,6 @@ class MenuManager {
             30
         );
         
-        // Sottomenu Dashboard
         add_submenu_page(
             'menu-manager',
             'Dashboard',
@@ -127,7 +124,6 @@ class MenuManager {
             array($this, 'dashboard_page')
         );
         
-        // Sottomenu Settings (solo per amministratori)
         add_submenu_page(
             'menu-manager',
             'Impostazioni',
@@ -139,13 +135,10 @@ class MenuManager {
     }
     
     public function enqueue_scripts() {
-        // Carica PDF.js per primo
         wp_enqueue_script('pdf-js', 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js', array(), '2.11.338', false);
-        
-        // Carica gli altri script
         wp_enqueue_script('turn-js', MENU_MANAGER_URL . 'assets/js/turn.min.js', array('jquery'), '1.0.0', true);
-        wp_enqueue_script('menu-manager-frontend', MENU_MANAGER_URL . 'assets/js/frontend.js', array('jquery', 'pdf-js'), '1.0.1', true);
-        wp_enqueue_style('menu-manager-frontend', MENU_MANAGER_URL . 'assets/css/frontend.css', array(), '1.0.1');
+        wp_enqueue_script('menu-manager-frontend', MENU_MANAGER_URL . 'assets/js/frontend.js', array('jquery', 'pdf-js'), '1.0.2', true);
+        wp_enqueue_style('menu-manager-frontend', MENU_MANAGER_URL . 'assets/css/frontend.css', array(), '1.0.2');
         
         wp_localize_script('menu-manager-frontend', 'menuManager', array(
             'ajax_url' => admin_url('admin-ajax.php'),
@@ -242,10 +235,10 @@ class MenuManager {
         global $wpdb;
         $table_name = $wpdb->prefix . 'menu_manager_menus';
         
-        $name = sanitize_text_field($_POST['name']);
+        $name = sanitize_text_field($_POST['name'] ?? '');
         $pdf_url = isset($_POST['pdf_url']) ? esc_url_raw($_POST['pdf_url']) : '';
-        $start_date = $_POST['start_date'] ? sanitize_text_field($_POST['start_date']) : null;
-        $end_date = $_POST['end_date'] ? sanitize_text_field($_POST['end_date']) : null;
+        $start_date = !empty($_POST['start_date']) ? sanitize_text_field($_POST['start_date']) : null;
+        $end_date = !empty($_POST['end_date']) ? sanitize_text_field($_POST['end_date']) : null;
         $is_active = isset($_POST['is_active']) ? 1 : 0;
         $priority = isset($_POST['priority']) ? intval($_POST['priority']) : 0;
         
@@ -266,7 +259,7 @@ class MenuManager {
             'priority' => $priority
         );
         
-        if (isset($_POST['menu_id']) && $_POST['menu_id']) {
+        if (isset($_POST['menu_id']) && !empty($_POST['menu_id'])) {
             $result = $wpdb->update(
                 $table_name,
                 $data,
@@ -296,7 +289,7 @@ class MenuManager {
         global $wpdb;
         $table_name = $wpdb->prefix . 'menu_manager_menus';
         
-        $menu_id = intval($_POST['menu_id']);
+        $menu_id = intval($_POST['menu_id'] ?? 0);
         $menu = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_name WHERE id = %d", $menu_id));
         
         if ($menu) {
@@ -319,11 +312,11 @@ class MenuManager {
         global $wpdb;
         $table_name = $wpdb->prefix . 'menu_manager_menus';
         
-        $menu_id = intval($_POST['menu_id']);
+        $menu_id = intval($_POST['menu_id'] ?? 0);
         
         $menu = $wpdb->get_row($wpdb->prepare("SELECT pdf_url FROM $table_name WHERE id = %d", $menu_id));
         
-        if ($menu && $menu->pdf_url) {
+        if ($menu && !empty($menu->pdf_url)) {
             $file_path = str_replace(wp_upload_dir()['baseurl'], wp_upload_dir()['basedir'], $menu->pdf_url);
             if (file_exists($file_path)) {
                 unlink($file_path);
@@ -347,7 +340,7 @@ class MenuManager {
         }
         
         $allowed_roles = isset($_POST['allowed_roles']) ? array_map('sanitize_text_field', $_POST['allowed_roles']) : array();
-        $menu_capability = sanitize_text_field($_POST['menu_capability']);
+        $menu_capability = sanitize_text_field($_POST['menu_capability'] ?? 'manage_options');
         
         $settings = array(
             'allowed_roles' => $allowed_roles,
@@ -387,18 +380,23 @@ class MenuManager {
         
         $current_time = current_time('mysql');
         
-        $query = "SELECT * FROM $table_name WHERE is_active = 1";
-        $query .= " AND (start_date IS NULL OR start_date <= '$current_time')";
-        $query .= " AND (end_date IS NULL OR end_date >= '$current_time')";
-        $query .= " AND pdf_url IS NOT NULL AND pdf_url != ''";
-        $query .= " ORDER BY priority DESC, created_at DESC LIMIT 1";
+        $query = $wpdb->prepare("
+            SELECT * FROM $table_name 
+            WHERE is_active = 1 
+            AND (start_date IS NULL OR start_date <= %s)
+            AND (end_date IS NULL OR end_date >= %s)
+            AND pdf_url IS NOT NULL 
+            AND pdf_url != ''
+            ORDER BY priority DESC, created_at DESC 
+            LIMIT 1
+        ", $current_time, $current_time);
         
         $result = $wpdb->get_row($query);
         
-        // Debug per amministratori
         if (current_user_can('administrator') && WP_DEBUG) {
             error_log('Menu Manager Debug - Query: ' . $query);
             error_log('Menu Manager Debug - Result: ' . print_r($result, true));
+            error_log('Menu Manager Debug - Current time: ' . $current_time);
         }
         
         return $result;

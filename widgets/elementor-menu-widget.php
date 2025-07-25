@@ -247,6 +247,10 @@ class MenuManager_Elementor_Widget extends \Elementor\Widget_Base {
         $menu_manager = new MenuManager();
         $active_menu = $menu_manager->get_active_menu();
         
+        if (WP_DEBUG && current_user_can('administrator')) {
+            echo '<!-- DEBUG: Menu trovato: ' . print_r($active_menu, true) . ' -->';
+        }
+        
         echo '<div class="menu-manager-widget">';
         
         if ($active_menu && !empty($active_menu->pdf_url)) {
@@ -274,6 +278,9 @@ class MenuManager_Elementor_Widget extends \Elementor\Widget_Base {
             echo '<div class="no-menu-message">';
             echo '<div class="no-menu-icon">📄</div>';
             echo '<p>Menu non disponibile al momento</p>';
+            if (WP_DEBUG && current_user_can('administrator')) {
+                echo '<p style="font-size: 12px; opacity: 0.7;">DEBUG: ' . (!$active_menu ? 'Nessun menu trovato' : 'PDF URL vuoto') . '</p>';
+            }
             echo '</div>';
         }
         
@@ -284,6 +291,10 @@ class MenuManager_Elementor_Widget extends \Elementor\Widget_Base {
         $pdf_url = esc_url($menu->pdf_url);
         $unique_id = uniqid('menu_');
         $is_double = $settings['display_mode'] === 'double';
+        
+        if (WP_DEBUG && current_user_can('administrator')) {
+            echo '<!-- DEBUG: PDF URL: ' . $pdf_url . ' -->';
+        }
         
         echo '<div class="pdf-viewer-wrapper">';
         echo '<div id="' . $unique_id . '" class="menu-flipbook-container" data-pdf="' . $pdf_url . '">';
@@ -324,19 +335,23 @@ class MenuManager_Elementor_Widget extends \Elementor\Widget_Base {
         
         echo '<script type="text/javascript">
         jQuery(document).ready(function($) {
+            console.log("Elementor widget script iniziato per:", "' . $pdf_url . '");
+            
             const container = $("#' . $unique_id . '").closest(".menu-viewer-container");
             const pdfUrl = "' . $pdf_url . '";
             const isDouble = ' . ($is_double ? 'true' : 'false') . ';
             
-            if (typeof window.initMenuViewer === "function") {
-                window.initMenuViewer(container, pdfUrl, isDouble);
-            } else {
-                setTimeout(() => {
-                    if (typeof window.initMenuViewer === "function") {
-                        window.initMenuViewer(container, pdfUrl, isDouble);
-                    }
-                }, 500);
+            function tryInit() {
+                if (typeof window.initMenuViewer === "function") {
+                    console.log("Inizializzazione viewer da Elementor widget");
+                    window.initMenuViewer(container, pdfUrl, isDouble);
+                } else {
+                    console.log("window.initMenuViewer non disponibile, riprovo...");
+                    setTimeout(tryInit, 500);
+                }
             }
+            
+            setTimeout(tryInit, 100);
         });
         </script>';
     }
