@@ -5,7 +5,10 @@
     
     <div class="menu-manager-admin">
         <div class="admin-header">
-            <button id="add-new-menu" class="button button-primary">Aggiungi Nuovo Menu</button>
+            <button id="add-new-menu" class="button button-primary button-large">
+                <span class="dashicons dashicons-plus-alt" style="vertical-align: middle; margin-right: 5px;"></span>
+                Aggiungi Nuovo Menu
+            </button>
         </div>
         
         <div class="menus-list">
@@ -13,7 +16,7 @@
                 <thead>
                     <tr>
                         <th>Nome</th>
-                        <th>PDF</th>
+                        <th>Contenuto</th>
                         <th>Periodo Attivo</th>
                         <th>Ruoli Utente</th>
                         <th>Stato</th>
@@ -23,29 +26,49 @@
                 <tbody>
                     <?php if (empty($menus)): ?>
                         <tr>
-                            <td colspan="6">Nessun menu caricato</td>
+                            <td colspan="6" style="text-align: center; padding: 30px;">
+                                <div style="opacity: 0.7;">
+                                    <span class="dashicons dashicons-food" style="font-size: 48px; display: block; margin-bottom: 10px;"></span>
+                                    <p>Nessun menu caricato</p>
+                                    <p><em>Clicca su "Aggiungi Nuovo Menu" per iniziare</em></p>
+                                </div>
+                            </td>
                         </tr>
                     <?php else: ?>
                         <?php foreach ($menus as $menu): ?>
-                            <tr data-menu-id="<?php echo $menu->id; ?>">
-                                <td><?php echo esc_html($menu->name); ?></td>
+                            <tr data-menu-id="<?php echo esc_attr($menu->id); ?>">
+                                <td><strong><?php echo esc_html($menu->name); ?></strong></td>
                                 <td>
-                                    <a href="<?php echo esc_url($menu->pdf_url); ?>" target="_blank">Visualizza PDF</a>
+                                    <?php if ($menu->pdf_url): ?>
+                                        <a href="<?php echo esc_url($menu->pdf_url); ?>" target="_blank" class="button button-small">
+                                            <span class="dashicons dashicons-pdf"></span> PDF
+                                        </a>
+                                    <?php endif; ?>
+                                    <?php if ($menu->custom_content): ?>
+                                        <span class="button button-small disabled">
+                                            <span class="dashicons dashicons-text-page"></span> Contenuto
+                                        </span>
+                                    <?php endif; ?>
                                 </td>
                                 <td>
                                     <?php 
                                     if ($menu->start_date || $menu->end_date) {
-                                        echo $menu->start_date ? date('d/m/Y', strtotime($menu->start_date)) : 'Sempre';
-                                        echo ' - ';
-                                        echo $menu->end_date ? date('d/m/Y', strtotime($menu->end_date)) : 'Sempre';
+                                        echo $menu->start_date ? date('d/m/Y H:i', strtotime($menu->start_date)) : 'Sempre';
+                                        echo '<br>↓<br>';
+                                        echo $menu->end_date ? date('d/m/Y H:i', strtotime($menu->end_date)) : 'Sempre';
                                     } else {
-                                        echo 'Sempre attivo';
+                                        echo '<span style="color: #28a745;">Sempre attivo</span>';
                                     }
                                     ?>
                                 </td>
                                 <td>
                                     <?php 
-                                    echo $menu->user_roles ? str_replace(',', ', ', $menu->user_roles) : 'Tutti gli utenti';
+                                    if ($menu->user_roles) {
+                                        $roles = explode(',', $menu->user_roles);
+                                        echo '<small>' . implode(', ', array_map('trim', $roles)) . '</small>';
+                                    } else {
+                                        echo '<span style="color: #666;">Tutti gli utenti</span>';
+                                    }
                                     ?>
                                 </td>
                                 <td>
@@ -54,8 +77,14 @@
                                     </span>
                                 </td>
                                 <td>
-                                    <button class="button edit-menu" data-menu-id="<?php echo $menu->id; ?>">Modifica</button>
-                                    <button class="button button-link-delete delete-menu" data-menu-id="<?php echo $menu->id; ?>">Elimina</button>
+                                    <div class="button-group">
+                                        <button class="button edit-menu" data-menu-id="<?php echo esc_attr($menu->id); ?>">
+                                            <span class="dashicons dashicons-edit"></span> Modifica
+                                        </button>
+                                        <button class="button button-link-delete delete-menu" data-menu-id="<?php echo esc_attr($menu->id); ?>">
+                                            <span class="dashicons dashicons-trash"></span> Elimina
+                                        </button>
+                                    </div>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
@@ -79,30 +108,54 @@
             
             <div class="form-row">
                 <label for="menu-name">Nome Menu *</label>
-                <input type="text" id="menu-name" name="name" required>
+                <input type="text" id="menu-name" name="name" required placeholder="Es: Menu Primavera 2025">
             </div>
             
             <div class="form-row">
-                <label for="pdf-upload">File PDF *</label>
+                <label>Tipo di Contenuto</label>
+                <div style="margin: 10px 0;">
+                    <label style="display: inline-block; margin-right: 20px;">
+                        <input type="radio" name="content_type" value="pdf" checked> File PDF
+                    </label>
+                    <label style="display: inline-block;">
+                        <input type="radio" name="content_type" value="custom"> Contenuto Personalizzato
+                    </label>
+                </div>
+            </div>
+            
+            <div class="form-row" id="pdf-upload-row">
+                <label for="pdf-upload">File PDF</label>
                 <div class="upload-area">
                     <input type="file" id="pdf-upload" accept=".pdf" style="display: none;">
                     <input type="hidden" id="pdf-url" name="pdf_url">
-                    <button type="button" id="upload-btn" class="button">Seleziona PDF</button>
+                    <button type="button" id="upload-btn" class="button">
+                        <span class="dashicons dashicons-upload"></span> Seleziona PDF
+                    </button>
+                    <p>oppure trascina un file PDF qui</p>
                     <div id="upload-status"></div>
                 </div>
+            </div>
+            
+            <div class="form-row" id="custom-content-row" style="display: none;">
+                <label for="custom-content">Contenuto Personalizzato</label>
+                <textarea id="custom-content" name="custom_content" rows="10" placeholder="Inserisci il contenuto del menu..."></textarea>
+                <button type="button" id="generate-pdf-btn" class="button" style="margin-top: 10px;">
+                    <span class="dashicons dashicons-pdf"></span> Genera PDF
+                </button>
             </div>
             
             <div class="form-row">
                 <div class="date-range">
                     <div class="date-field">
-                        <label for="start-date">Data Inizio</label>
+                        <label for="start-date">Data/Ora Inizio</label>
                         <input type="datetime-local" id="start-date" name="start_date">
                     </div>
                     <div class="date-field">
-                        <label for="end-date">Data Fine</label>
+                        <label for="end-date">Data/Ora Fine</label>
                         <input type="datetime-local" id="end-date" name="end_date">
                     </div>
                 </div>
+                <small style="color: #666;">Lascia vuoto per menu sempre attivo</small>
             </div>
             
             <div class="form-row">
@@ -113,12 +166,12 @@
                     $roles = $wp_roles->get_names();
                     foreach ($roles as $role_key => $role_name): ?>
                         <label class="role-checkbox">
-                            <input type="checkbox" name="user_roles[]" value="<?php echo $role_key; ?>">
-                            <?php echo $role_name; ?>
+                            <input type="checkbox" name="user_roles[]" value="<?php echo esc_attr($role_key); ?>">
+                            <?php echo esc_html($role_name); ?>
                         </label>
                     <?php endforeach; ?>
                 </div>
-                <small>Lascia vuoto per permettere l'accesso a tutti gli utenti</small>
+                <small style="color: #666;">Lascia vuoto per permettere l'accesso a tutti gli utenti</small>
             </div>
             
             <div class="form-row">
@@ -128,10 +181,35 @@
                 </label>
             </div>
             
+            <div class="form-row">
+                <label for="priority">Priorità</label>
+                <input type="number" id="priority" name="priority" value="0" min="0" max="100">
+                <small style="color: #666;">I menu con priorità maggiore vengono mostrati per primi</small>
+            </div>
+            
             <div class="modal-actions">
                 <button type="button" class="button" id="cancel-btn">Annulla</button>
-                <button type="submit" class="button button-primary" id="save-btn">Salva Menu</button>
+                <button type="submit" class="button button-primary" id="save-btn">
+                    <span class="dashicons dashicons-yes"></span> Salva Menu
+                </button>
             </div>
         </form>
     </div>
 </div>
+
+<script type="text/javascript">
+jQuery(document).ready(function($) {
+    console.log('Admin script caricato');
+    console.log('menuManagerAdmin:', typeof menuManagerAdmin !== 'undefined' ? menuManagerAdmin : 'NON DEFINITO');
+    
+    $('input[name="content_type"]').change(function() {
+        if ($(this).val() === 'pdf') {
+            $('#pdf-upload-row').show();
+            $('#custom-content-row').hide();
+        } else {
+            $('#pdf-upload-row').hide();
+            $('#custom-content-row').show();
+        }
+    });
+});
+</script>
