@@ -37,6 +37,16 @@
     color: #721c24;
 }
 
+.priority-badge {
+    display: inline-block;
+    padding: 4px 8px;
+    background: #e3f2fd;
+    color: #1976d2;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
 .menu-modal {
     position: fixed;
     top: 0;
@@ -104,6 +114,7 @@
 }
 
 .form-row input[type="text"],
+.form-row input[type="number"],
 .form-row input[type="datetime-local"] {
     width: 100%;
     padding: 10px;
@@ -149,32 +160,6 @@
 
 .date-field {
     flex: 1;
-}
-
-.user-roles {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 10px;
-    margin-top: 10px;
-}
-
-.role-checkbox {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px;
-    background: #f8f9fa;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: background 0.3s ease;
-}
-
-.role-checkbox:hover {
-    background: #e9ecef;
-}
-
-.role-checkbox input[type="checkbox"] {
-    margin: 0;
 }
 
 .toggle-label {
@@ -232,6 +217,55 @@
     100% { transform: rotate(360deg); }
 }
 
+.button-group {
+    display: flex;
+    gap: 5px;
+}
+
+.button-group .button {
+    padding: 6px 10px;
+    font-size: 12px;
+}
+
+.menu-manager-settings {
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.settings-info {
+    margin-top: 30px;
+    padding: 20px 0;
+    border-top: 1px solid #ddd;
+}
+
+.settings-info h3 {
+    margin-top: 0;
+    color: #333;
+}
+
+.settings-info ul {
+    list-style-type: disc;
+    margin-left: 20px;
+}
+
+.form-table th {
+    width: 200px;
+    padding: 20px 10px 20px 0;
+    vertical-align: top;
+}
+
+.form-table td {
+    padding: 15px 10px;
+}
+
+fieldset label {
+    font-weight: normal;
+    margin-bottom: 8px;
+    display: block;
+}
+
 @media (max-width: 768px) {
     .modal-content {
         width: 95%;
@@ -242,11 +276,18 @@
         flex-direction: column;
     }
     
-    .user-roles {
-        grid-template-columns: 1fr;
-    }
-    
     .modal-actions {
         flex-direction: column;
+    }
+    
+    .button-group {
+        flex-direction: column;
+    }
+    
+    .form-table th,
+    .form-table td {
+        display: block;
+        width: 100%;
+        padding: 10px 0;
     }
 }

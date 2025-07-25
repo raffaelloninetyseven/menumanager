@@ -49,7 +49,6 @@ jQuery(document).ready(function($) {
         }
     });
     
-    // Drag and drop per upload
     $('.upload-area').on('dragover dragenter', function(e) {
         e.preventDefault();
         e.stopPropagation();
@@ -81,7 +80,6 @@ jQuery(document).ready(function($) {
         $('#menu-id').val('');
         $('#pdf-url').val('');
         $('#upload-status').html('');
-        $('input[name="user_roles[]"]').prop('checked', false);
         currentMenuId = null;
     }
     
@@ -173,6 +171,7 @@ jQuery(document).ready(function($) {
                     $('#menu-id').val(menu.id);
                     $('#menu-name').val(menu.name);
                     $('#pdf-url').val(menu.pdf_url);
+                    $('#priority').val(menu.priority);
                     
                     if (menu.start_date) {
                         const startDate = new Date(menu.start_date);
@@ -187,13 +186,6 @@ jQuery(document).ready(function($) {
                     }
                     
                     $('#is-active').prop('checked', menu.is_active == 1);
-                    
-                    if (menu.user_roles) {
-                        const roles = menu.user_roles.split(',');
-                        roles.forEach(function(role) {
-                            $(`input[name="user_roles[]"][value="${role.trim()}"]`).prop('checked', true);
-                        });
-                    }
                     
                     if (menu.pdf_url) {
                         showUploadStatus('✓ PDF già caricato', 'success');
@@ -233,7 +225,6 @@ jQuery(document).ready(function($) {
         });
     }
     
-    // Validazione in tempo reale
     $('#menu-name').on('input', function() {
         const name = $(this).val().trim();
         if (name.length < 3) {

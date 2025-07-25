@@ -1,7 +1,7 @@
 <?php if (!defined('ABSPATH')) exit; ?>
 
 <div class="wrap">
-    <h1>Menu Manager</h1>
+    <h1>Menu Manager - Dashboard</h1>
     
     <div class="menu-manager-admin">
         <div class="admin-header">
@@ -16,10 +16,10 @@
                 <thead>
                     <tr>
                         <th>Nome</th>
-                        <th>Contenuto</th>
+                        <th>PDF</th>
                         <th>Periodo Attivo</th>
-                        <th>Ruoli Utente</th>
                         <th>Stato</th>
+                        <th>Priorità</th>
                         <th>Azioni</th>
                     </tr>
                 </thead>
@@ -41,13 +41,10 @@
                                 <td>
                                     <?php if ($menu->pdf_url): ?>
                                         <a href="<?php echo esc_url($menu->pdf_url); ?>" target="_blank" class="button button-small">
-                                            <span class="dashicons dashicons-pdf"></span> PDF
+                                            <span class="dashicons dashicons-pdf"></span> Visualizza PDF
                                         </a>
-                                    <?php endif; ?>
-                                    <?php if ($menu->custom_content): ?>
-                                        <span class="button button-small disabled">
-                                            <span class="dashicons dashicons-text-page"></span> Contenuto
-                                        </span>
+                                    <?php else: ?>
+                                        <span style="color: #999;">Nessun PDF</span>
                                     <?php endif; ?>
                                 </td>
                                 <td>
@@ -62,19 +59,12 @@
                                     ?>
                                 </td>
                                 <td>
-                                    <?php 
-                                    if ($menu->user_roles) {
-                                        $roles = explode(',', $menu->user_roles);
-                                        echo '<small>' . implode(', ', array_map('trim', $roles)) . '</small>';
-                                    } else {
-                                        echo '<span style="color: #666;">Tutti gli utenti</span>';
-                                    }
-                                    ?>
-                                </td>
-                                <td>
                                     <span class="status-badge <?php echo $menu->is_active ? 'active' : 'inactive'; ?>">
                                         <?php echo $menu->is_active ? 'Attivo' : 'Inattivo'; ?>
                                     </span>
+                                </td>
+                                <td>
+                                    <span class="priority-badge"><?php echo esc_html($menu->priority); ?></span>
                                 </td>
                                 <td>
                                     <div class="button-group">
@@ -112,19 +102,7 @@
             </div>
             
             <div class="form-row">
-                <label>Tipo di Contenuto</label>
-                <div style="margin: 10px 0;">
-                    <label style="display: inline-block; margin-right: 20px;">
-                        <input type="radio" name="content_type" value="pdf" checked> File PDF
-                    </label>
-                    <label style="display: inline-block;">
-                        <input type="radio" name="content_type" value="custom"> Contenuto Personalizzato
-                    </label>
-                </div>
-            </div>
-            
-            <div class="form-row" id="pdf-upload-row">
-                <label for="pdf-upload">File PDF</label>
+                <label for="pdf-upload">File PDF *</label>
                 <div class="upload-area">
                     <input type="file" id="pdf-upload" accept=".pdf" style="display: none;">
                     <input type="hidden" id="pdf-url" name="pdf_url">
@@ -134,14 +112,6 @@
                     <p>oppure trascina un file PDF qui</p>
                     <div id="upload-status"></div>
                 </div>
-            </div>
-            
-            <div class="form-row" id="custom-content-row" style="display: none;">
-                <label for="custom-content">Contenuto Personalizzato</label>
-                <textarea id="custom-content" name="custom_content" rows="10" placeholder="Inserisci il contenuto del menu..."></textarea>
-                <button type="button" id="generate-pdf-btn" class="button" style="margin-top: 10px;">
-                    <span class="dashicons dashicons-pdf"></span> Genera PDF
-                </button>
             </div>
             
             <div class="form-row">
@@ -156,22 +126,6 @@
                     </div>
                 </div>
                 <small style="color: #666;">Lascia vuoto per menu sempre attivo</small>
-            </div>
-            
-            <div class="form-row">
-                <label>Ruoli Utente Autorizzati</label>
-                <div class="user-roles">
-                    <?php 
-                    global $wp_roles;
-                    $roles = $wp_roles->get_names();
-                    foreach ($roles as $role_key => $role_name): ?>
-                        <label class="role-checkbox">
-                            <input type="checkbox" name="user_roles[]" value="<?php echo esc_attr($role_key); ?>">
-                            <?php echo esc_html($role_name); ?>
-                        </label>
-                    <?php endforeach; ?>
-                </div>
-                <small style="color: #666;">Lascia vuoto per permettere l'accesso a tutti gli utenti</small>
             </div>
             
             <div class="form-row">
@@ -196,20 +150,3 @@
         </form>
     </div>
 </div>
-
-<script type="text/javascript">
-jQuery(document).ready(function($) {
-    console.log('Admin script caricato');
-    console.log('menuManagerAdmin:', typeof menuManagerAdmin !== 'undefined' ? menuManagerAdmin : 'NON DEFINITO');
-    
-    $('input[name="content_type"]').change(function() {
-        if ($(this).val() === 'pdf') {
-            $('#pdf-upload-row').show();
-            $('#custom-content-row').hide();
-        } else {
-            $('#pdf-upload-row').hide();
-            $('#custom-content-row').show();
-        }
-    });
-});
-</script>
