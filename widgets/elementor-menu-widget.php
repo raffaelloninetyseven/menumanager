@@ -247,8 +247,15 @@ class MenuManager_Elementor_Widget extends \Elementor\Widget_Base {
         $menu_manager = new MenuManager();
         $active_menu = $menu_manager->get_active_menu();
         
-        if (WP_DEBUG && current_user_can('administrator')) {
-            echo '<!-- DEBUG: Menu trovato: ' . print_r($active_menu, true) . ' -->';
+        // Debug per admin
+        if (current_user_can('administrator')) {
+            echo '<!-- Menu Manager Debug: ';
+            if ($active_menu) {
+                echo 'Menu trovato: ' . esc_html($active_menu->name) . ', PDF: ' . esc_html($active_menu->pdf_url);
+            } else {
+                echo 'Nessun menu attivo trovato';
+            }
+            echo ' -->';
         }
         
         echo '<div class="menu-manager-widget">';
@@ -278,8 +285,17 @@ class MenuManager_Elementor_Widget extends \Elementor\Widget_Base {
             echo '<div class="no-menu-message">';
             echo '<div class="no-menu-icon">📄</div>';
             echo '<p>Menu non disponibile al momento</p>';
-            if (WP_DEBUG && current_user_can('administrator')) {
-                echo '<p style="font-size: 12px; opacity: 0.7;">DEBUG: ' . (!$active_menu ? 'Nessun menu trovato' : 'PDF URL vuoto') . '</p>';
+            if (current_user_can('administrator')) {
+                global $wpdb;
+                $table_name = $wpdb->prefix . 'menu_manager_menus';
+                $count = $wpdb->get_var("SELECT COUNT(*) FROM $table_name WHERE is_active = 1");
+                echo '<p style="font-size: 12px; color: #999;">Debug Admin: ';
+                if ($active_menu) {
+                    echo 'Menu trovato ma PDF mancante';
+                } else {
+                    echo "Nessun menu attivo ($count menu attivi totali)";
+                }
+                echo '</p>';
             }
             echo '</div>';
         }
@@ -289,12 +305,8 @@ class MenuManager_Elementor_Widget extends \Elementor\Widget_Base {
     
     private function render_viewer($menu, $settings) {
         $pdf_url = esc_url($menu->pdf_url);
-        $unique_id = uniqid('menu_');
+        $unique_id = 'menu_' . uniqid();
         $is_double = $settings['display_mode'] === 'double';
-        
-        if (WP_DEBUG && current_user_can('administrator')) {
-            echo '<!-- DEBUG: PDF URL: ' . $pdf_url . ' -->';
-        }
         
         echo '<div class="pdf-viewer-wrapper">';
         echo '<div id="' . $unique_id . '" class="menu-flipbook-container" data-pdf="' . $pdf_url . '">';
@@ -333,27 +345,49 @@ class MenuManager_Elementor_Widget extends \Elementor\Widget_Base {
         }
         echo '</div>';
         
-        echo '<script type="text/javascript">
+        ?>
+        <script type="text/javascript">
         jQuery(document).ready(function($) {
-            console.log("Elementor widget script iniziato per:", "' . $pdf_url . '");
+            console.log('Elementor widget script iniziato per: <?php echo $pdf_url; ?>');
             
-            const container = $("#' . $unique_id . '").closest(".menu-viewer-container");
-            const pdfUrl = "' . $pdf_url . '";
-            const isDouble = ' . ($is_double ? 'true' : 'false') . ';
-            
-            function tryInit() {
-                if (typeof window.initMenuViewer === "function") {
-                    console.log("Inizializzazione viewer da Elementor widget");
-                    window.initMenuViewer(container, pdfUrl, isDouble);
+            function initWidget() {
+                if (typeof pdfjsLib === 'undefined') {
+                    console.log('PDF.js non ancora caricato, attesa...');
+                    setTimeout(initWidget, 200);
+                    return;
+                }
+                
+                console.log('PDF.js caricato, inizializzazione viewer...');
+                
+                const container = $('#<?php echo $unique_id; ?>').closest('.menu-viewer-container');
+                console.log('Trovato container:', container.length);
+                
+                if (container.length && typeof window.initMenuViewer === 'function') {
+                    console.log('Inizializzazione viewer da Elementor widget');
+                    try {
+                        window.initMenuViewer(container, '<?php echo $pdf_url; ?>', <?php echo $is_double ? 'true' : 'false'; ?>);
+                    } catch(error) {
+                        console.error('Errore inizializzazione viewer:', error);
+                        $('#<?php echo $unique_id; ?>').html(`
+                            <div class="loading-container">
+                                <div style="font-size: 48px; margin-bottom: 16px; color: #ef4444;">❌</div>
+                                <div class="loading-text">Errore: ${error.message}</div>
+                                <div style="margin-top: 10px;">
+                                    <a href="<?php echo $pdf_url; ?>" target="_blank">Apri PDF direttamente</a>
+                                </div>
+                            </div>
+                        `);
+                    }
                 } else {
-                    console.log("window.initMenuViewer non disponibile, riprovo...");
-                    setTimeout(tryInit, 500);
+                    console.log('initMenuViewer non disponibile, retry...');
+                    setTimeout(initWidget, 300);
                 }
             }
             
-            setTimeout(tryInit, 100);
+            initWidget();
         });
-        </script>';
+        </script>
+        <?php
     }
     
     private function render_embed($menu) {

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Menu Manager
  * Description: Plugin per la gestione avanzata del menu ristorante con widget Elementor e visualizzazione PDF sfogliabile
- * Version: 0.3.7
+ * Version: 0.4.0
  * Author: SilverStudioDM
  */
 
@@ -259,7 +259,7 @@ class MenuManager {
             'priority' => $priority
         );
         
-        if (isset($_POST['menu_id']) && !empty($_POST['menu_id'])) {
+        if (isset($_POST['menu_id']) && $_POST['menu_id']) {
             $result = $wpdb->update(
                 $table_name,
                 $data,
@@ -289,7 +289,7 @@ class MenuManager {
         global $wpdb;
         $table_name = $wpdb->prefix . 'menu_manager_menus';
         
-        $menu_id = intval($_POST['menu_id'] ?? 0);
+        $menu_id = intval($_POST['menu_id']);
         $menu = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_name WHERE id = %d", $menu_id));
         
         if ($menu) {
@@ -312,11 +312,11 @@ class MenuManager {
         global $wpdb;
         $table_name = $wpdb->prefix . 'menu_manager_menus';
         
-        $menu_id = intval($_POST['menu_id'] ?? 0);
+        $menu_id = intval($_POST['menu_id']);
         
         $menu = $wpdb->get_row($wpdb->prepare("SELECT pdf_url FROM $table_name WHERE id = %d", $menu_id));
         
-        if ($menu && !empty($menu->pdf_url)) {
+        if ($menu && $menu->pdf_url) {
             $file_path = str_replace(wp_upload_dir()['baseurl'], wp_upload_dir()['basedir'], $menu->pdf_url);
             if (file_exists($file_path)) {
                 unlink($file_path);
@@ -339,8 +339,10 @@ class MenuManager {
             wp_send_json_error('Unauthorized');
         }
         
-        $allowed_roles = isset($_POST['allowed_roles']) ? array_map('sanitize_text_field', $_POST['allowed_roles']) : array();
-        $menu_capability = sanitize_text_field($_POST['menu_capability'] ?? 'manage_options');
+        $allowed_roles = isset($_POST['allowed_roles']) && is_array($_POST['allowed_roles']) ? 
+                        array_map('sanitize_text_field', $_POST['allowed_roles']) : array();
+        $menu_capability = isset($_POST['menu_capability']) ? 
+                          sanitize_text_field($_POST['menu_capability']) : 'manage_options';
         
         $settings = array(
             'allowed_roles' => $allowed_roles,
@@ -349,7 +351,7 @@ class MenuManager {
         
         $result = update_option('menu_manager_settings', $settings);
         
-        if ($result) {
+        if ($result !== false) {
             wp_send_json_success('Impostazioni salvate con successo');
         } else {
             wp_send_json_error('Errore nel salvare le impostazioni');
@@ -380,23 +382,36 @@ class MenuManager {
         
         $current_time = current_time('mysql');
         
-        $query = $wpdb->prepare("
-            SELECT * FROM $table_name 
-            WHERE is_active = 1 
-            AND (start_date IS NULL OR start_date <= %s)
-            AND (end_date IS NULL OR end_date >= %s)
-            AND pdf_url IS NOT NULL 
-            AND pdf_url != ''
-            ORDER BY priority DESC, created_at DESC 
-            LIMIT 1
-        ", $current_time, $current_time);
+        // Query diretta senza prepare per debug
+        $query = "SELECT * FROM $table_name 
+                  WHERE is_active = 1 
+                  AND (start_date IS NULL OR start_date <= '$current_time')
+                  AND (end_date IS NULL OR end_date >= '$current_time')
+                  AND pdf_url IS NOT NULL 
+                  AND pdf_url != ''
+                  ORDER BY priority DESC, created_at DESC 
+                  LIMIT 1";
         
         $result = $wpdb->get_row($query);
         
         if (current_user_can('administrator') && WP_DEBUG) {
-            error_log('Menu Manager Debug - Query: ' . $query);
-            error_log('Menu Manager Debug - Result: ' . print_r($result, true));
             error_log('Menu Manager Debug - Current time: ' . $current_time);
+            error_log('Menu Manager Debug - Final Query: ' . $query);
+            error_log('Menu Manager Debug - Result: ' . print_r($result, true));
+            
+            // Debug tutti i menu
+            $all_menus = $wpdb->get_results("SELECT id, name, is_active, start_date, end_date, pdf_url FROM $table_name");
+            error_log('Menu Manager Debug - All menus: ' . print_r($all_menus, true));
+            
+            // Test manuale della condizione
+            foreach ($all_menus as $menu) {
+                $start_ok = is_null($menu->start_date) || ($menu->start_date <= $current_time);
+                $end_ok = is_null($menu->end_date) || ($menu->end_date >= $current_time);
+                $active_ok = $menu->is_active == 1;
+                $pdf_ok = !empty($menu->pdf_url);
+                
+                error_log("Menu {$menu->id}: active=$active_ok, start=$start_ok, end=$end_ok, pdf=$pdf_ok");
+            }
         }
         
         return $result;
