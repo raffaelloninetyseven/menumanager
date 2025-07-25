@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Menu Manager
  * Description: Plugin per la gestione avanzata del menu ristorante con widget Elementor e visualizzazione PDF sfogliabile
- * Version: 0.3.0
+ * Version: 0.3.2
  * Author: SilverStudioDM
  */
 
@@ -139,10 +139,13 @@ class MenuManager {
     }
     
     public function enqueue_scripts() {
-        wp_enqueue_script('pdf-js', 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js', array(), '2.11.338', true);
+        // Carica PDF.js per primo
+        wp_enqueue_script('pdf-js', 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js', array(), '2.11.338', false);
+        
+        // Carica gli altri script
         wp_enqueue_script('turn-js', MENU_MANAGER_URL . 'assets/js/turn.min.js', array('jquery'), '1.0.0', true);
-        wp_enqueue_script('menu-manager-frontend', MENU_MANAGER_URL . 'assets/js/frontend.js', array('jquery', 'pdf-js', 'turn-js'), '1.0.0', true);
-        wp_enqueue_style('menu-manager-frontend', MENU_MANAGER_URL . 'assets/css/frontend.css', array(), '1.0.0');
+        wp_enqueue_script('menu-manager-frontend', MENU_MANAGER_URL . 'assets/js/frontend.js', array('jquery', 'pdf-js'), '1.0.1', true);
+        wp_enqueue_style('menu-manager-frontend', MENU_MANAGER_URL . 'assets/css/frontend.css', array(), '1.0.1');
         
         wp_localize_script('menu-manager-frontend', 'menuManager', array(
             'ajax_url' => admin_url('admin-ajax.php'),
@@ -387,9 +390,18 @@ class MenuManager {
         $query = "SELECT * FROM $table_name WHERE is_active = 1";
         $query .= " AND (start_date IS NULL OR start_date <= '$current_time')";
         $query .= " AND (end_date IS NULL OR end_date >= '$current_time')";
+        $query .= " AND pdf_url IS NOT NULL AND pdf_url != ''";
         $query .= " ORDER BY priority DESC, created_at DESC LIMIT 1";
         
-        return $wpdb->get_row($query);
+        $result = $wpdb->get_row($query);
+        
+        // Debug per amministratori
+        if (current_user_can('administrator') && WP_DEBUG) {
+            error_log('Menu Manager Debug - Query: ' . $query);
+            error_log('Menu Manager Debug - Result: ' . print_r($result, true));
+        }
+        
+        return $result;
     }
 }
 

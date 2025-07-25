@@ -194,7 +194,7 @@ class MenuManager_Elementor_Widget extends \Elementor\Widget_Base {
         
         echo '<div class="menu-manager-widget">';
         
-        if ($active_menu) {
+        if ($active_menu && !empty($active_menu->pdf_url)) {
             if ($settings['show_title'] === 'yes') {
                 echo '<h3 class="menu-title">' . esc_html($active_menu->name) . '</h3>';
             }
@@ -214,9 +214,19 @@ class MenuManager_Elementor_Widget extends \Elementor\Widget_Base {
             }
             
             echo '</div>';
+            
+            // Debug info (rimuovi in produzione)
+            if (current_user_can('administrator')) {
+                echo '<div style="margin-top: 10px; padding: 10px; background: #f0f0f0; font-size: 12px;">';
+                echo 'Debug: Menu ID=' . $active_menu->id . ', PDF URL=' . $active_menu->pdf_url;
+                echo '</div>';
+            }
         } else {
             echo '<div class="no-menu-message">';
             echo '<p>' . esc_html($settings['fallback_text']) . '</p>';
+            if (current_user_can('administrator')) {
+                echo '<p><small>Debug: ' . ($active_menu ? 'Menu trovato ma senza PDF' : 'Nessun menu attivo trovato') . '</small></p>';
+            }
             echo '</div>';
         }
         
@@ -224,24 +234,104 @@ class MenuManager_Elementor_Widget extends \Elementor\Widget_Base {
     }
     
     private function render_flipbook($menu, $settings) {
-        echo '<div id="menu-flipbook" data-pdf="' . esc_url($menu->pdf_url) . '">';
+        $pdf_url = esc_url($menu->pdf_url);
+        $unique_id = uniqid();
+        
+        echo '<div id="menu-flipbook-' . $unique_id . '" class="menu-flipbook-container" data-pdf="' . $pdf_url . '">';
         echo '<div class="loading-spinner">Caricamento menu...</div>';
         echo '</div>';
         
         if ($settings['show_controls'] === 'yes') {
             echo '<div class="menu-controls">';
-            echo '<button id="prev-page" class="control-btn">‹ Precedente</button>';
-            echo '<span id="page-info">Pagina <span id="current-page">1</span> di <span id="total-pages">1</span></span>';
-            echo '<button id="next-page" class="control-btn">Successiva ›</button>';
-            echo '<button id="zoom-in" class="control-btn">+</button>';
-            echo '<button id="zoom-out" class="control-btn">-</button>';
-            echo '<button id="fullscreen" class="control-btn">⛶</button>';
+            echo '<button class="control-btn prev-page">‹ Precedente</button>';
+            echo '<span class="page-info">Pagina <span class="current-page">1</span> di <span class="total-pages">1</span></span>';
+            echo '<button class="control-btn next-page">Successiva ›</button>';
+            echo '<button class="control-btn zoom-in">+</button>';
+            echo '<button class="control-btn zoom-out">-</button>';
+            echo '<button class="control-btn fullscreen">⛶</button>';
             echo '</div>';
         }
+        
+        // Script inline per questo specifico widget
+        $unique_id = uniqid();
+        echo '<script type="text/javascript">
+        jQuery(document).ready(function($) {
+            const container = $("#menu-flipbook-' . $unique_id . '").closest(".menu-viewer-container");
+            const pdfUrl = "' . $pdf_url . '";
+            
+            function initWidget() {
+                if (typeof window.loadMenuPDF === "function") {
+                    window.loadMenuPDF(pdfUrl, container);
+                } else if (typeof pdfjsLib !== "undefined") {
+                    // Fallback: carica direttamente se la funzione globale non è disponibile
+                    loadPDFDirect(pdfUrl, container);
+                } else {
+                    container.find(".loading-spinner").text("Errore: PDF.js non disponibile");
+                }
+            }
+            
+            function loadPDFDirect(pdfUrl, container) {
+                if (typeof pdfjsLib === "undefined") {
+                    container.find(".loading-spinner").text("Errore: PDF.js non caricato");
+                    return;
+                }
+                
+                pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.worker.min.js";
+                
+                container.find(".loading-spinner").text("Caricamento PDF...");
+                
+                pdfjsLib.getDocument(pdfUrl).promise.then(function(pdf) {
+                    const totalPages = pdf.numPages;
+                    const flipbook = container.find(".menu-flipbook-container");
+                    
+                    // Pulisce il container
+                    flipbook.empty();
+                    
+                    // Carica prima pagina
+                    pdf.getPage(1).then(function(page) {
+                        const viewport = page.getViewport({ scale: 1.5 });
+                        const canvas = document.createElement("canvas");
+                        const context = canvas.getContext("2d");
+                        
+                        canvas.height = viewport.height;
+                        canvas.width = viewport.width;
+                        canvas.style.width = "100%";
+                        canvas.style.height = "100%";
+                        canvas.style.objectFit = "contain";
+                        
+                        flipbook.append(canvas);
+                        
+                        page.render({
+                            canvasContext: context,
+                            viewport: viewport
+                        }).promise.then(function() {
+                            container.find(".loading-spinner").hide();
+                            container.find(".current-page").text("1");
+                            container.find(".total-pages").text(totalPages);
+                        });
+                    });
+                }).catch(function(error) {
+                    console.error("Errore caricamento PDF:", error);
+                    container.find(".loading-spinner").text("Errore nel caricamento: " + error.message);
+                });
+            }
+            
+            // Prova a inizializzare, altrimenti aspetta
+            if (document.readyState === "complete") {
+                initWidget();
+            } else {
+                $(window).on("load", initWidget);
+            }
+        });
+        </script>';
     }
     
     private function render_embed($menu) {
-        echo '<embed src="' . esc_url($menu->pdf_url) . '" type="application/pdf" width="100%" height="100%">';
+        $pdf_url = esc_url($menu->pdf_url);
+        echo '<object data="' . $pdf_url . '" type="application/pdf" width="100%" height="100%">';
+        echo '<p>Il tuo browser non supporta la visualizzazione PDF. ';
+        echo '<a href="' . $pdf_url . '" target="_blank">Clicca qui per scaricare il PDF</a></p>';
+        echo '</object>';
     }
     
     private function render_download($menu) {

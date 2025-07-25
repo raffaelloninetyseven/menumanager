@@ -1,29 +1,48 @@
-jQuery(document).ready(function($) {
+// Assicuriamoci che le funzioni siano disponibili globalmente
+(function($) {
     
+    // Configurazione PDF.js non appena il script è caricato
+    function initPDFJS() {
+        if (typeof pdfjsLib !== 'undefined' && !window.pdfJSConfigured) {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.worker.min.js';
+            window.pdfJSConfigured = true;
+        }
+    }
+    
+    // Prova a configurare immediatamente o aspetta il caricamento
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initPDFJS);
+    } else {
+        initPDFJS();
+    }
+    
+    // Variabili globali per il controllo
     let currentPage = 1;
     let totalPages = 1;
     let pdfPages = [];
     let zoomLevel = 1;
     let isDragging = false;
     let startX, startY, scrollLeft, scrollTop;
+    let currentContainer = null;
     
-    $('.menu-viewer-container[data-mode="flipbook"]').each(function() {
-        const container = $(this);
-        const flipbook = container.find('#menu-flipbook');
-        const pdfUrl = flipbook.data('pdf');
-        
-        if (pdfUrl) {
-            loadPDF(pdfUrl, container);
-        }
-    });
-    
-    function loadPDF(pdfUrl, container) {
+    // Funzione globale per caricare PDF (disponibile per i widget)
+    window.loadMenuPDF = function(pdfUrl, container) {
         const loadingEl = container.find('.loading-spinner');
         loadingEl.text('Caricamento PDF...');
         
+        if (typeof pdfjsLib === 'undefined') {
+            loadingEl.text('Errore: PDF.js non disponibile');
+            return;
+        }
+        
+        // Assicurati che il worker sia configurato
+        if (!window.pdfJSConfigured) {
+            initPDFJS();
+        }
+        
         pdfjsLib.getDocument(pdfUrl).promise.then(function(pdf) {
             totalPages = pdf.numPages;
-            updatePageInfo();
+            updatePageInfo(container);
             
             const promises = [];
             for (let i = 1; i <= totalPages; i++) {
@@ -37,9 +56,9 @@ jQuery(document).ready(function($) {
             });
         }).catch(function(error) {
             console.error('Errore nel caricamento PDF:', error);
-            loadingEl.text('Errore nel caricamento del menu');
+            loadingEl.text('Errore nel caricamento del menu: ' + error.message);
         });
-    }
+    };
     
     function renderPage(pdf, pageNum) {
         return pdf.getPage(pageNum).then(function(page) {
@@ -60,193 +79,210 @@ jQuery(document).ready(function($) {
     }
     
     function initializeFlipbook(container) {
-        const flipbook = container.find('#menu-flipbook');
+        const flipbook = container.find('.menu-flipbook-container');
         flipbook.empty();
         
-        for (let i = 0; i < Math.ceil(totalPages / 2); i++) {
-            const pageDiv = $('<div class="flipbook-page"></div>');
-            
-            if (pdfPages[i * 2]) {
-                const leftPage = $('<div class="page-content"></div>');
-                leftPage.css('background-image', `url(${pdfPages[i * 2]})`);
-                pageDiv.append(leftPage);
-            }
-            
-            if (pdfPages[i * 2 + 1]) {
-                const rightPage = $('<div class="page-content"></div>');
-                rightPage.css('background-image', `url(${pdfPages[i * 2 + 1]})`);
-                pageDiv.append(rightPage);
-            }
-            
-            flipbook.append(pageDiv);
-        }
+        // Crea un contenitore per le pagine
+        const pagesContainer = $('<div class="pages-container"></div>');
+        flipbook.append(pagesContainer);
         
-        if (typeof $.fn.turn !== 'undefined') {
-            flipbook.turn({
-                width: flipbook.width(),
-                height: flipbook.height(),
-                autoCenter: true,
-                gradients: true,
-                elevation: 50
+        for (let i = 0; i < totalPages; i++) {
+            const pageDiv = $('<div class="menu-page" data-page="' + (i + 1) + '"></div>');
+            pageDiv.css({
+                'background-image': 'url(' + pdfPages[i] + ')',
+                'background-size': 'contain',
+                'background-repeat': 'no-repeat',
+                'background-position': 'center',
+                'width': '100%',
+                'height': '100%',
+                'position': 'absolute',
+                'top': '0',
+                'left': '0',
+                'display': i === 0 ? 'block' : 'none'
             });
-            
-            flipbook.bind('turned', function(event, page) {
-                currentPage = page;
-                updatePageInfo();
-            });
-        } else {
-            showSimplePages(flipbook);
+            pagesContainer.append(pageDiv);
         }
-        
-        setupZoomAndPan(flipbook);
-    }
-    
-    function showSimplePages(flipbook) {
-        flipbook.find('.flipbook-page').hide();
-        flipbook.find('.flipbook-page').eq(0).show();
         
         currentPage = 1;
-        updatePageInfo();
+        currentContainer = container;
+        updatePageInfo(container);
+        setupZoomAndPan(container);
+        bindControls(container);
     }
     
-    function setupZoomAndPan(flipbook) {
-        const page = flipbook.find('.page-content').first();
+    function setupZoomAndPan(container) {
+        const pagesContainer = container.find('.pages-container');
         
-        page.on('mousedown', function(e) {
+        pagesContainer.on('mousedown', function(e) {
             if (zoomLevel > 1) {
                 isDragging = true;
-                startX = e.pageX - page.offset().left;
-                startY = e.pageY - page.offset().top;
-                scrollLeft = page.scrollLeft();
-                scrollTop = page.scrollTop();
+                startX = e.pageX;
+                startY = e.pageY;
+                scrollLeft = pagesContainer.scrollLeft();
+                scrollTop = pagesContainer.scrollTop();
+                pagesContainer.css('cursor', 'grabbing');
             }
         });
         
         $(document).on('mousemove', function(e) {
             if (!isDragging) return;
             e.preventDefault();
-            const x = e.pageX - page.offset().left;
-            const y = e.pageY - page.offset().top;
+            const x = e.pageX;
+            const y = e.pageY;
             const walkX = (x - startX) * 2;
             const walkY = (y - startY) * 2;
-            page.scrollLeft(scrollLeft - walkX);
-            page.scrollTop(scrollTop - walkY);
+            pagesContainer.scrollLeft(scrollLeft - walkX);
+            pagesContainer.scrollTop(scrollTop - walkY);
         });
         
         $(document).on('mouseup', function() {
-            isDragging = false;
+            if (isDragging) {
+                isDragging = false;
+                container.find('.pages-container').css('cursor', zoomLevel > 1 ? 'grab' : 'default');
+            }
         });
         
-        page.on('wheel', function(e) {
+        pagesContainer.on('wheel', function(e) {
             e.preventDefault();
             if (e.originalEvent.deltaY < 0) {
-                zoomIn();
+                zoomIn(container);
             } else {
-                zoomOut();
+                zoomOut(container);
             }
         });
     }
     
-    function updatePageInfo() {
-        $('#current-page').text(currentPage);
-        $('#total-pages').text(Math.ceil(totalPages / 2));
+    function bindControls(container) {
+        container.find('.prev-page').off('click').on('click', function() {
+            if (currentPage > 1) {
+                goToPage(currentPage - 1, container);
+            }
+        });
         
-        $('#prev-page').prop('disabled', currentPage <= 1);
-        $('#next-page').prop('disabled', currentPage >= Math.ceil(totalPages / 2));
+        container.find('.next-page').off('click').on('click', function() {
+            if (currentPage < totalPages) {
+                goToPage(currentPage + 1, container);
+            }
+        });
+        
+        container.find('.zoom-in').off('click').on('click', function() {
+            zoomIn(container);
+        });
+        
+        container.find('.zoom-out').off('click').on('click', function() {
+            zoomOut(container);
+        });
+        
+        container.find('.fullscreen').off('click').on('click', function() {
+            toggleFullscreen(container);
+        });
     }
     
-    function zoomIn() {
+    function updatePageInfo(container) {
+        container.find('.current-page').text(currentPage);
+        container.find('.total-pages').text(totalPages);
+        
+        container.find('.prev-page').prop('disabled', currentPage <= 1);
+        container.find('.next-page').prop('disabled', currentPage >= totalPages);
+    }
+    
+    function zoomIn(container) {
         if (zoomLevel < 3) {
             zoomLevel += 0.2;
-            applyZoom();
+            applyZoom(container);
         }
     }
     
-    function zoomOut() {
+    function zoomOut(container) {
         if (zoomLevel > 0.5) {
             zoomLevel -= 0.2;
-            applyZoom();
+            applyZoom(container);
         }
     }
     
-    function applyZoom() {
-        $('.page-content').css('transform', `scale(${zoomLevel})`);
-        $('.page-content').toggleClass('zoomed', zoomLevel > 1);
+    function applyZoom(container) {
+        container.find('.menu-page').css('transform', 'scale(' + zoomLevel + ')');
+        container.find('.pages-container').css('cursor', zoomLevel > 1 ? 'grab' : 'default');
     }
     
-    function goToPage(pageNum) {
-        const flipbook = $('#menu-flipbook');
+    function goToPage(pageNum, container) {
+        if (pageNum < 1 || pageNum > totalPages) return;
         
-        if (typeof flipbook.turn === 'function') {
-            flipbook.turn('page', pageNum);
-        } else {
-            flipbook.find('.flipbook-page').hide();
-            flipbook.find('.flipbook-page').eq(pageNum - 1).show();
-            currentPage = pageNum;
-            updatePageInfo();
-        }
+        container.find('.menu-page').hide();
+        container.find('.menu-page[data-page="' + pageNum + '"]').show();
+        
+        currentPage = pageNum;
+        updatePageInfo(container);
     }
     
-    function toggleFullscreen() {
-        const container = $('.menu-viewer-container').get(0);
+    function toggleFullscreen(container) {
+        const element = container.get(0);
         
         if (!document.fullscreenElement) {
-            container.requestFullscreen().catch(err => {
-                console.log('Fullscreen non supportato:', err);
-            });
+            if (element.requestFullscreen) {
+                element.requestFullscreen().catch(err => {
+                    console.log('Fullscreen non supportato:', err);
+                });
+            }
         } else {
-            document.exitFullscreen();
+            if (document.exitFullscreen) {
+                document.exitFullscreen();
+            }
         }
     }
     
-    $('#prev-page').on('click', function() {
-        if (currentPage > 1) {
-            goToPage(currentPage - 1);
-        }
+    // Inizializzazione quando il DOM è pronto
+    $(document).ready(function() {
+        
+        // Inizializza tutti i container flipbook esistenti
+        $('.menu-viewer-container[data-mode="flipbook"]').each(function() {
+            const container = $(this);
+            const flipbook = container.find('.menu-flipbook-container');
+            const pdfUrl = flipbook.data('pdf');
+            
+            if (pdfUrl && typeof window.loadMenuPDF === 'function') {
+                window.loadMenuPDF(pdfUrl, container);
+            }
+        });
+        
+        // Controlli da tastiera
+        $(document).on('keydown', function(e) {
+            if (!currentContainer) return;
+            
+            switch(e.keyCode) {
+                case 37: // Freccia sinistra
+                    currentContainer.find('.prev-page').click();
+                    break;
+                case 39: // Freccia destra
+                    currentContainer.find('.next-page').click();
+                    break;
+                case 187: // +
+                    if (e.ctrlKey) {
+                        e.preventDefault();
+                        zoomIn(currentContainer);
+                    }
+                    break;
+                case 189: // -
+                    if (e.ctrlKey) {
+                        e.preventDefault();
+                        zoomOut(currentContainer);
+                    }
+                    break;
+                case 70: // F
+                    if (e.ctrlKey) {
+                        e.preventDefault();
+                        toggleFullscreen(currentContainer);
+                    }
+                    break;
+            }
+        });
+        
+        // Gestione resize finestra
+        $(window).on('resize', function() {
+            if (currentContainer) {
+                applyZoom(currentContainer);
+            }
+        });
     });
     
-    $('#next-page').on('click', function() {
-        if (currentPage < Math.ceil(totalPages / 2)) {
-            goToPage(currentPage + 1);
-        }
-    });
-    
-    $('#zoom-in').on('click', zoomIn);
-    $('#zoom-out').on('click', zoomOut);
-    $('#fullscreen').on('click', toggleFullscreen);
-    
-    $(document).on('keydown', function(e) {
-        switch(e.keyCode) {
-            case 37: // Freccia sinistra
-                $('#prev-page').click();
-                break;
-            case 39: // Freccia destra
-                $('#next-page').click();
-                break;
-            case 187: // +
-                if (e.ctrlKey) {
-                    e.preventDefault();
-                    zoomIn();
-                }
-                break;
-            case 189: // -
-                if (e.ctrlKey) {
-                    e.preventDefault();
-                    zoomOut();
-                }
-                break;
-            case 70: // F
-                if (e.ctrlKey) {
-                    e.preventDefault();
-                    toggleFullscreen();
-                }
-                break;
-        }
-    });
-    
-    $(window).on('resize', function() {
-        if ($('#menu-flipbook').data('turn')) {
-            $('#menu-flipbook').turn('resize');
-        }
-    });
-});
+})(jQuery);
