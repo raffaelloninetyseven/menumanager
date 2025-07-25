@@ -1,549 +1,255 @@
 jQuery(document).ready(function($) {
     
-    // Prevent multiple initializations
-    if (window.menuManagerInitialized) {
-        return;
-    }
-    window.menuManagerInitialized = true;
+    let currentMenuId = null;
     
-    // Remove any existing event listeners first
-    $(document).off('.menuManager');
-    $('#menu-form').off('.menuManager');
+    $('#add-new-menu').on('click', function() {
+        resetForm();
+        $('#modal-title').text('Aggiungi Nuovo Menu');
+        $('#menu-modal').show();
+    });
     
-    // Initialize color pickers
-    $('.color-picker').wpColorPicker({
-        change: function() {
-            updatePreview();
+    $('.edit-menu').on('click', function() {
+        const menuId = $(this).data('menu-id');
+        loadMenuData(menuId);
+        $('#modal-title').text('Modifica Menu');
+        $('#menu-modal').show();
+    });
+    
+    $('.delete-menu').on('click', function() {
+        const menuId = $(this).data('menu-id');
+        
+        if (confirm('Sei sicuro di voler eliminare questo menu?')) {
+            deleteMenu(menuId);
         }
     });
     
-    // Menu type toggle
-    $('input[name="menu-type"]').on('change.menuManager', function() {
-        if ($(this).val() === 'custom') {
-            $('#custom-menu-section').slideDown();
-            $('#pdf-menu-section').slideUp();
+    $('.close, #cancel-btn').on('click', function() {
+        $('#menu-modal').hide();
+        resetForm();
+    });
+    
+    $(window).on('click', function(e) {
+        if ($(e.target).hasClass('menu-modal')) {
+            $('#menu-modal').hide();
+            resetForm();
+        }
+    });
+    
+    $('#upload-btn').on('click', function() {
+        $('#pdf-upload').click();
+    });
+    
+    $('#pdf-upload').on('change', function() {
+        const file = this.files[0];
+        
+        if (file && file.type === 'application/pdf') {
+            uploadPDF(file);
         } else {
-            $('#custom-menu-section').slideUp();
-            $('#pdf-menu-section').slideDown();
+            showUploadStatus('Seleziona un file PDF valido', 'error');
         }
     });
     
-    // Initial toggle
-    $('input[name="menu-type"]:checked').trigger('change');
-    
-    // Real-time preview updates
-    $('#menu-content, #font-family, #font-size').on('input.menuManager change.menuManager', function() {
-        updatePreview();
+    // Drag and drop per upload
+    $('.upload-area').on('dragover dragenter', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        $(this).addClass('dragover');
     });
     
-    // New menu button
-    $('#new-menu-btn').on('click.menuManager', function() {
-        window.location.href = '?page=menu-manager&new=1';
+    $('.upload-area').on('dragleave drop', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        $(this).removeClass('dragover');
+        
+        if (e.type === 'drop') {
+            const files = e.originalEvent.dataTransfer.files;
+            if (files.length > 0 && files[0].type === 'application/pdf') {
+                uploadPDF(files[0]);
+            } else {
+                showUploadStatus('Seleziona un file PDF valido', 'error');
+            }
+        }
     });
     
-    // Form submission
-    $('#menu-form').on('submit.menuManager', function(e) {
+    $('#menu-form').on('submit', function(e) {
         e.preventDefault();
         saveMenu();
     });
     
-    // PDF upload handling with single event binding
-    $('#upload-pdf-btn').on('click.menuManager', function() {
-        $('#pdf-upload').trigger('click');
-    });
-    
-    $('#pdf-upload').on('change.menuManager', function() {
-        if (this.files && this.files[0]) {
-            handlePDFUpload(this.files[0]);
-            $(this).val(''); // Clear input immediately
-        }
-    });
-    
-    // Generate PDF button
-    $('#generate-pdf-btn').on('click.menuManager', function() {
-        generatePDF();
-    });
-    
-    // Delete menu buttons with event delegation
-    $(document).on('click.menuManager', '.delete-menu', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        
-        var $btn = $(this);
-        if ($btn.hasClass('deleting')) return; // Prevent double clicks
-        
-        var menuId = $btn.data('menu-id');
-        var menuName = $btn.closest('.menu-item').find('strong').text();
-        
-        showConfirmDialog('Sei sicuro di voler eliminare il menu "' + menuName + '"?', function() {
-            deleteMenu(menuId);
-        });
-    });
-    
-    // Auto-save functionality
-    var autoSaveTimer;
-    $('#menu-content').on('input.menuManager', function() {
-        clearTimeout(autoSaveTimer);
-        autoSaveTimer = setTimeout(function() {
-            if ($('#menu-id').val() > 0) {
-                autoSaveMenu();
-            }
-        }, 5000);
-    });
-    
-    // Drag and drop for PDF upload
-    var $uploadArea = $('.upload-area');
-    
-    $uploadArea.on('dragover.menuManager dragenter.menuManager', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        $(this).addClass('drag-over');
-    });
-    
-    $uploadArea.on('dragleave.menuManager', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        $(this).removeClass('drag-over');
-    });
-    
-    $uploadArea.on('drop.menuManager', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        $(this).removeClass('drag-over');
-        
-        var files = e.originalEvent.dataTransfer.files;
-        if (files.length > 0 && files[0].type === 'application/pdf') {
-            handlePDFUpload(files[0]);
-        } else {
-            showNotice('Errore: Seleziona un file PDF valido', 'error');
-        }
-    });
-    
-    // Keyboard shortcuts
-    $(document).on('keydown.menuManager', function(e) {
-        if (e.ctrlKey || e.metaKey) {
-            switch(e.which) {
-                case 83: // Ctrl+S - Save
-                    e.preventDefault();
-                    saveMenu();
-                    break;
-                case 78: // Ctrl+N - New
-                    e.preventDefault();
-                    window.location.href = '?page=menu-manager&new=1';
-                    break;
-            }
-        }
-    });
-    
-    // Functions
-    function saveMenu() {
-        var $form = $('#menu-form');
-        if ($form.hasClass('saving')) return; // Prevent double save
-        
-        $form.addClass('saving loading');
-        
-        var formData = {
-            action: 'save_menu_settings',
-            nonce: menuManagerAjax.nonce,
-            menu_id: $('#menu-id').val(),
-            name: $('#menu-name').val(),
-            type: $('input[name="menu-type"]:checked').val(),
-            custom_content: $('#menu-content').val(),
-            settings: {
-                bg_color: $('#bg-color').val(),
-                text_color: $('#text-color').val(),
-                font_family: $('#font-family').val(),
-                font_size: $('#font-size').val()
-            }
-        };
-        
-        $.post(menuManagerAjax.ajaxurl, formData)
-            .done(function(response) {
-                if (response.success) {
-                    showNotice('Menu salvato con successo!', 'success');
-                    if ($('#menu-id').val() == 0) {
-                        setTimeout(function() {
-                            window.location.href = '?page=menu-manager&menu_id=' + response.data.menu_id;
-                        }, 1000);
-                    }
-                    $('#menu-id').val(response.data.menu_id);
-                    updatePreview();
-                } else {
-                    showNotice('Errore nel salvataggio: ' + response.data, 'error');
-                }
-            })
-            .fail(function() {
-                showNotice('Errore di connessione', 'error');
-            })
-            .always(function() {
-                $form.removeClass('saving loading');
-            });
+    function resetForm() {
+        $('#menu-form')[0].reset();
+        $('#menu-id').val('');
+        $('#pdf-url').val('');
+        $('#upload-status').html('');
+        $('input[name="user_roles[]"]').prop('checked', false);
+        currentMenuId = null;
     }
     
-    function autoSaveMenu() {
-        if ($('#menu-name').val().trim() === '' || $('#menu-form').hasClass('saving')) return;
-        
-        var formData = {
-            action: 'save_menu_settings',
-            nonce: menuManagerAjax.nonce,
-            menu_id: $('#menu-id').val(),
-            name: $('#menu-name').val(),
-            type: $('input[name="menu-type"]:checked').val(),
-            custom_content: $('#menu-content').val(),
-            settings: {
-                bg_color: $('#bg-color').val(),
-                text_color: $('#text-color').val(),
-                font_family: $('#font-family').val(),
-                font_size: $('#font-size').val()
-            }
-        };
-        
-        $.post(menuManagerAjax.ajaxurl, formData)
-            .done(function(response) {
-                if (response.success) {
-                    showNotice('Salvato automaticamente', 'success', 2000);
-                    $('#menu-id').val(response.data.menu_id);
-                }
-            });
-    }
-    
-    function handlePDFUpload(file) {
-        if (!file || file.type !== 'application/pdf') {
-            showNotice('Errore: Seleziona un file PDF valido', 'error');
-            return;
-        }
-        
-        if (file.size > 10 * 1024 * 1024) {
-            showNotice('Errore: Il file è troppo grande (max 10MB)', 'error');
-            return;
-        }
-        
-        var $uploadArea = $('.upload-area');
-        if ($uploadArea.hasClass('uploading')) return; // Prevent double upload
-        
-        var menuId = $('#menu-id').val();
-        if (!menuId || menuId == 0) {
-            showNotice('Salva prima il menu per caricare il PDF', 'error');
-            return;
-        }
-        
-        var formData = new FormData();
-        formData.append('action', 'upload_pdf');
-        formData.append('nonce', menuManagerAjax.nonce);
-        formData.append('menu_id', menuId);
+    function uploadPDF(file) {
+        const formData = new FormData();
         formData.append('pdf_file', file);
+        formData.append('action', 'upload_menu');
+        formData.append('nonce', menuManagerAdmin.nonce);
         
-        $uploadArea.addClass('uploading loading');
+        showUploadStatus('<div class="spinner"></div> Caricamento in corso...', 'loading');
+        $('#upload-btn').prop('disabled', true);
         
         $.ajax({
-            url: menuManagerAjax.ajaxurl,
+            url: menuManagerAdmin.ajax_url,
             type: 'POST',
             data: formData,
             processData: false,
             contentType: false,
             success: function(response) {
                 if (response.success) {
-                    var deleteBtn = '<button type="button" class="delete-pdf-btn" data-pdf-url="' + response.data.pdf_url + '" data-menu-id="' + menuId + '">Elimina PDF</button>';
-                    $('.upload-info').html('<p>PDF caricato: <a href="' + response.data.pdf_url + '" target="_blank">Visualizza</a> ' + deleteBtn + '</p>');
-                    showNotice('PDF caricato con successo!', 'success');
+                    $('#pdf-url').val(response.data.url);
+                    showUploadStatus('✓ PDF caricato con successo', 'success');
                 } else {
-                    showNotice('Errore nel caricamento: ' + response.data, 'error');
+                    showUploadStatus('✗ ' + response.data, 'error');
                 }
             },
             error: function() {
-                showNotice('Errore di connessione durante il caricamento', 'error');
+                showUploadStatus('✗ Errore nel caricamento', 'error');
             },
             complete: function() {
-                $uploadArea.removeClass('uploading loading');
+                $('#upload-btn').prop('disabled', false);
             }
         });
     }
     
-    function generatePDF() {
-        var $btn = $('#generate-pdf-btn');
-        if ($btn.hasClass('generating')) return; // Prevent double generation
+    function showUploadStatus(message, type) {
+        const statusEl = $('#upload-status');
+        statusEl.html(message);
+        statusEl.removeClass('success error loading').addClass(type);
+    }
+    
+    function saveMenu() {
+        const formData = $('#menu-form').serialize();
+        const actionData = formData + '&action=save_menu_config&nonce=' + menuManagerAdmin.nonce;
         
-        var menuId = $('#menu-id').val();
-        if (!menuId || menuId == 0) {
-            showNotice('Salva prima il menu per generare il PDF', 'error');
+        if (!$('#pdf-url').val()) {
+            alert('Carica un file PDF prima di salvare');
             return;
         }
         
-        if ($('#menu-content').val().trim() === '') {
-            showNotice('Inserisci del contenuto prima di generare il PDF', 'error');
-            return;
-        }
+        $('#save-btn').prop('disabled', true).text('Salvataggio...');
         
-        $btn.addClass('generating loading').prop('disabled', true);
-        
-        $.post(menuManagerAjax.ajaxurl, {
-            action: 'generate_pdf',
-            nonce: menuManagerAjax.nonce,
-            menu_id: menuId
-        })
-        .done(function(response) {
-            if (response.success) {
-                showNotice('PDF generato con successo!', 'success');
-                window.open(response.data.pdf_url, '_blank');
-            } else {
-                showNotice('Errore nella generazione del PDF: ' + response.data, 'error');
+        $.ajax({
+            url: menuManagerAdmin.ajax_url,
+            type: 'POST',
+            data: actionData,
+            success: function(response) {
+                if (response.success) {
+                    alert('Menu salvato con successo!');
+                    location.reload();
+                } else {
+                    alert('Errore: ' + response.data);
+                }
+            },
+            error: function() {
+                alert('Errore nel salvare il menu');
+            },
+            complete: function() {
+                $('#save-btn').prop('disabled', false).text('Salva Menu');
             }
-        })
-        .fail(function() {
-            showNotice('Errore di connessione', 'error');
-        })
-        .always(function() {
-            $btn.removeClass('generating loading').prop('disabled', false);
+        });
+    }
+    
+    function loadMenuData(menuId) {
+        currentMenuId = menuId;
+        
+        $.ajax({
+            url: menuManagerAdmin.ajax_url,
+            type: 'POST',
+            data: {
+                action: 'get_menu_data',
+                menu_id: menuId,
+                nonce: menuManagerAdmin.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    const menu = response.data;
+                    
+                    $('#menu-id').val(menu.id);
+                    $('#menu-name').val(menu.name);
+                    $('#pdf-url').val(menu.pdf_url);
+                    
+                    if (menu.start_date) {
+                        const startDate = new Date(menu.start_date);
+                        const startISO = startDate.toISOString().slice(0, 16);
+                        $('#start-date').val(startISO);
+                    }
+                    
+                    if (menu.end_date) {
+                        const endDate = new Date(menu.end_date);
+                        const endISO = endDate.toISOString().slice(0, 16);
+                        $('#end-date').val(endISO);
+                    }
+                    
+                    $('#is-active').prop('checked', menu.is_active == 1);
+                    
+                    if (menu.user_roles) {
+                        const roles = menu.user_roles.split(',');
+                        roles.forEach(function(role) {
+                            $(`input[name="user_roles[]"][value="${role.trim()}"]`).prop('checked', true);
+                        });
+                    }
+                    
+                    if (menu.pdf_url) {
+                        showUploadStatus('✓ PDF già caricato', 'success');
+                    }
+                } else {
+                    alert('Errore nel caricare i dati del menu');
+                }
+            },
+            error: function() {
+                alert('Errore nel caricare i dati del menu');
+            }
         });
     }
     
     function deleteMenu(menuId) {
-        $.post(menuManagerAjax.ajaxurl, {
-            action: 'delete_menu',
-            nonce: menuManagerAjax.nonce,
-            menu_id: menuId
-        })
-        .done(function(response) {
-            if (response.success) {
-                showNotice('Menu eliminato con successo!', 'success');
-                setTimeout(function() {
-                    window.location.href = '?page=menu-manager';
-                }, 1000);
-            } else {
-                showNotice('Errore nell\'eliminazione: ' + response.data, 'error');
+        $.ajax({
+            url: menuManagerAdmin.ajax_url,
+            type: 'POST',
+            data: {
+                action: 'delete_menu',
+                menu_id: menuId,
+                nonce: menuManagerAdmin.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    $(`tr[data-menu-id="${menuId}"]`).fadeOut(function() {
+                        $(this).remove();
+                    });
+                    alert('Menu eliminato con successo');
+                } else {
+                    alert('Errore nell\'eliminare il menu');
+                }
+            },
+            error: function() {
+                alert('Errore nell\'eliminare il menu');
             }
-        })
-        .fail(function() {
-            showNotice('Errore di connessione', 'error');
         });
     }
     
-    // Delete PDF button with event delegation
-    $(document).on('click.menuManager', '.delete-pdf-btn', function() {
-        var $btn = $(this);
-        if ($btn.hasClass('deleting')) return; // Prevent double delete
-        
-        var pdfUrl = $btn.data('pdf-url');
-        var menuId = $btn.data('menu-id');
-        
-        $btn.addClass('deleting');
-        
-        showConfirmDialog('Sei sicuro di voler eliminare questo PDF?', function() {
-            deletePDF(pdfUrl, menuId);
-        }, function() {
-            $btn.removeClass('deleting');
-        });
+    // Validazione in tempo reale
+    $('#menu-name').on('input', function() {
+        const name = $(this).val().trim();
+        if (name.length < 3) {
+            $(this).css('border-color', '#dc3545');
+        } else {
+            $(this).css('border-color', '#28a745');
+        }
     });
     
-    function deletePDF(pdfUrl, menuId) {
-        $.post(menuManagerAjax.ajaxurl, {
-            action: 'delete_pdf',
-            nonce: menuManagerAjax.nonce,
-            menu_id: menuId,
-            pdf_url: pdfUrl
-        })
-        .done(function(response) {
-            if (response.success) {
-                $('.upload-info').html('<p>Nessun PDF caricato</p>');
-                showNotice('PDF eliminato con successo!', 'success');
-            } else {
-                showNotice('Errore nell\'eliminazione del PDF: ' + response.data, 'error');
-            }
-        })
-        .fail(function() {
-            showNotice('Errore di connessione', 'error');
-        })
-        .always(function() {
-            $('.delete-pdf-btn').removeClass('deleting');
-        });
-    }
-    
-    // Custom confirmation dialog
-    function showConfirmDialog(message, onConfirm, onCancel) {
-        // Remove existing dialogs
-        $('.menu-confirm-dialog').remove();
+    $('#start-date, #end-date').on('change', function() {
+        const startDate = new Date($('#start-date').val());
+        const endDate = new Date($('#end-date').val());
         
-        var $dialog = $('<div class="menu-confirm-dialog">' +
-            '<div class="confirm-overlay"></div>' +
-            '<div class="confirm-box">' +
-            '<div class="confirm-content">' +
-            '<div class="confirm-icon">⚠</div>' +
-            '<div class="confirm-message">' + message + '</div>' +
-            '<div class="confirm-buttons">' +
-            '<button class="confirm-btn confirm-yes">Conferma</button>' +
-            '<button class="confirm-btn confirm-no">Annulla</button>' +
-            '</div>' +
-            '</div>' +
-            '</div>' +
-            '</div>');
-        
-        $('body').append($dialog);
-        
-        // Button handlers - use one() to prevent multiple bindings
-        $dialog.find('.confirm-yes').one('click', function() {
-            $dialog.remove();
-            if (onConfirm) onConfirm();
-        });
-        
-        $dialog.find('.confirm-no, .confirm-overlay').one('click', function() {
-            $dialog.remove();
-            if (onCancel) onCancel();
-        });
-        
-        // ESC key
-        var escHandler = function(e) {
-            if (e.which === 27) { // ESC
-                $dialog.remove();
-                $(document).off('keydown', escHandler);
-                if (onCancel) onCancel();
-            }
-        };
-        $(document).on('keydown', escHandler);
-    }
-    
-    function updatePreview() {
-        var content = $('#menu-content').val();
-        var bgColor = $('#bg-color').val();
-        var textColor = $('#text-color').val();
-        var fontFamily = $('#font-family').val();
-        var fontSize = $('#font-size').val();
-        
-        if (!content || content.trim() === '') {
-            $('#flipbook-preview').html('<div class="flipbook-loading">Inserisci del contenuto per vedere l\'anteprima</div>');
-            return;
+        if (startDate && endDate && startDate >= endDate) {
+            alert('La data di fine deve essere successiva alla data di inizio');
+            $('#end-date').val('');
         }
-        
-        var pages = splitContentToPages(content);
-        var pagesHtml = '';
-        
-        pages.forEach(function(pageContent, index) {
-            pagesHtml += '<div class="menu-page" style="' +
-                'background-color: ' + bgColor + ';' +
-                'color: ' + textColor + ';' +
-                'font-family: ' + fontFamily + ';' +
-                'font-size: ' + fontSize + 'px;' +
-                '">' +
-                '<div class="page-content">' + escapeHtml(pageContent).replace(/\n/g, '<br>') + '</div>' +
-                '</div>';
-        });
-        
-        $('#flipbook-preview').html(pagesHtml);
-        
-        setTimeout(function() {
-            var $preview = $('#flipbook-preview');
-            if ($preview.turn('is')) {
-                $preview.turn('destroy');
-            }
-            $preview.turn({
-                width: $preview.width(),
-                height: 400,
-                elevation: 50,
-                gradients: true,
-                autoCenter: true,
-                duration: 600
-            });
-        }, 100);
-    }
-    
-    function splitContentToPages(content, charsPerPage = 1500) {
-        content = content.trim();
-        if (!content) return [''];
-        
-        var pages = [];
-        var lines = content.split('\n');
-        var currentPage = '';
-        var currentLength = 0;
-        
-        lines.forEach(function(line) {
-            var lineLength = line.length;
-            
-            if (currentLength + lineLength > charsPerPage && currentPage.trim() !== '') {
-                pages.push(currentPage.trim());
-                currentPage = line + '\n';
-                currentLength = lineLength;
-            } else {
-                currentPage += line + '\n';
-                currentLength += lineLength;
-            }
-        });
-        
-        if (currentPage.trim() !== '') {
-            pages.push(currentPage.trim());
-        }
-        
-        return pages.length > 0 ? pages : [''];
-    }
-    
-    function escapeHtml(text) {
-        var map = {
-            '&': '&amp;',
-            '<': '&lt;',
-            '>': '&gt;',
-            '"': '&quot;',
-            "'": '&#039;'
-        };
-        return text.replace(/[&<>"']/g, function(m) { return map[m]; });
-    }
-    
-    function showNotice(message, type, duration = 4000) {
-        $('.menu-notice').remove();
-        
-        var $notice = $('<div class="menu-manager-popup notice menu-notice notice-' + type + '">' +
-            '<div class="popup-content">' +
-            '<span class="popup-icon">' + (type === 'success' ? '✓' : '⚠') + '</span>' +
-            '<span class="popup-message">' + message + '</span>' +
-            '<button class="popup-close" type="button">×</button>' +
-            '</div>' +
-            '</div>');
-        
-        $('body').append($notice);
-        
-        $notice.css({
-            'position': 'fixed',
-            'top': '20px',
-            'right': '20px',
-            'z-index': '999999',
-            'max-width': '400px',
-            'animation': 'slideInRight 0.3s ease'
-        });
-        
-        $notice.find('.popup-close').one('click', function() {
-            $notice.fadeOut(function() {
-                $(this).remove();
-            });
-        });
-        
-        setTimeout(function() {
-            $notice.fadeOut(function() {
-                $(this).remove();
-            });
-        }, duration);
-    }
-    
-    // Load existing menu data if editing
-    var currentMenuId = $('#menu-id').val();
-    if (currentMenuId > 0) {
-        loadMenuSettings(currentMenuId);
-    }
-    
-    function loadMenuSettings(menuId) {
-        var currentMenu = window.menuManagerData;
-        if (currentMenu && currentMenu.settings) {
-            var settings = JSON.parse(currentMenu.settings);
-            $('#bg-color').val(settings.bg_color || '#ffffff').trigger('change');
-            $('#text-color').val(settings.text_color || '#333333').trigger('change');
-            $('#font-family').val(settings.font_family || 'Arial');
-            $('#font-size').val(settings.font_size || 14);
-            
-            $('#bg-color').wpColorPicker('color', settings.bg_color || '#ffffff');
-            $('#text-color').wpColorPicker('color', settings.text_color || '#333333');
-            
-            setTimeout(updatePreview, 500);
-        }
-    }
-    
-    // Initial preview update
-    if ($('#menu-content').val().trim() !== '') {
-        setTimeout(updatePreview, 1000);
-    }
+    });
 });

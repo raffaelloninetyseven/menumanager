@@ -1,195 +1,252 @@
 jQuery(document).ready(function($) {
     
-    // Initialize all flipbooks on the page
-    $('.menu-flipbook').each(function() {
-        var $flipbook = $(this);
-        var flipbookId = $flipbook.attr('id');
+    let currentPage = 1;
+    let totalPages = 1;
+    let pdfPages = [];
+    let zoomLevel = 1;
+    let isDragging = false;
+    let startX, startY, scrollLeft, scrollTop;
+    
+    $('.menu-viewer-container[data-mode="flipbook"]').each(function() {
+        const container = $(this);
+        const flipbook = container.find('#menu-flipbook');
+        const pdfUrl = flipbook.data('pdf');
         
-        if (!flipbookId) {
-            flipbookId = 'flipbook-' + Math.random().toString(36).substr(2, 9);
-            $flipbook.attr('id', flipbookId);
+        if (pdfUrl) {
+            loadPDF(pdfUrl, container);
         }
-        
-        // Initialize Turn.js
-        $flipbook.turn({
-            width: $flipbook.parent().width(),
-            height: $flipbook.height(),
-            elevation: 50,
-            gradients: true,
-            autoCenter: true,
-            duration: 1000,
-            pages: $flipbook.children('.menu-page').length,
-            when: {
-                turning: function(event, page, view) {
-                    // Page turning event
-                },
-                turned: function(event, page, view) {
-                    // Page turned event
-                }
-            }
-        });
-        
-        // Add navigation controls
-        if ($flipbook.children('.menu-page').length > 1) {
-            addNavigationControls($flipbook);
-        }
-        
-        // Make responsive
-        makeResponsive($flipbook);
     });
     
-    // Handle window resize
-    $(window).resize(function() {
-        $('.menu-flipbook').each(function() {
-            makeResponsive($(this));
-        });
-    });
-    
-    function addNavigationControls($flipbook) {
-        var $container = $flipbook.parent();
+    function loadPDF(pdfUrl, container) {
+        const loadingEl = container.find('.loading-spinner');
+        loadingEl.text('Caricamento PDF...');
         
-        // Add navigation buttons
-        var $navContainer = $('<div class="flipbook-navigation"></div>');
-        var $prevBtn = $('<button class="flipbook-btn flipbook-prev" title="Pagina precedente">‹</button>');
-        var $nextBtn = $('<button class="flipbook-btn flipbook-next" title="Pagina successiva">›</button>');
-        var $pageInfo = $('<span class="flipbook-page-info"></span>');
-        
-        $navContainer.append($prevBtn, $pageInfo, $nextBtn);
-        $container.append($navContainer);
-        
-        // Update page info
-        function updatePageInfo() {
-            var currentPage = $flipbook.turn('page');
-            var totalPages = $flipbook.turn('pages');
-            $pageInfo.text(currentPage + ' / ' + totalPages);
-            
-            $prevBtn.prop('disabled', currentPage <= 1);
-            $nextBtn.prop('disabled', currentPage >= totalPages);
-        }
-        
-        // Event handlers
-        $prevBtn.click(function() {
-            $flipbook.turn('previous');
-        });
-        
-        $nextBtn.click(function() {
-            $flipbook.turn('next');
-        });
-        
-        // Update on page turn
-        $flipbook.bind('turned', function() {
+        pdfjsLib.getDocument(pdfUrl).promise.then(function(pdf) {
+            totalPages = pdf.numPages;
             updatePageInfo();
+            
+            const promises = [];
+            for (let i = 1; i <= totalPages; i++) {
+                promises.push(renderPage(pdf, i));
+            }
+            
+            Promise.all(promises).then(function(pages) {
+                pdfPages = pages;
+                initializeFlipbook(container);
+                loadingEl.hide();
+            });
+        }).catch(function(error) {
+            console.error('Errore nel caricamento PDF:', error);
+            loadingEl.text('Errore nel caricamento del menu');
         });
+    }
+    
+    function renderPage(pdf, pageNum) {
+        return pdf.getPage(pageNum).then(function(page) {
+            const viewport = page.getViewport({ scale: 1.5 });
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+            
+            return page.render({
+                canvasContext: context,
+                viewport: viewport
+            }).promise.then(function() {
+                return canvas.toDataURL();
+            });
+        });
+    }
+    
+    function initializeFlipbook(container) {
+        const flipbook = container.find('#menu-flipbook');
+        flipbook.empty();
         
-        // Initial update
+        for (let i = 0; i < Math.ceil(totalPages / 2); i++) {
+            const pageDiv = $('<div class="flipbook-page"></div>');
+            
+            if (pdfPages[i * 2]) {
+                const leftPage = $('<div class="page-content"></div>');
+                leftPage.css('background-image', `url(${pdfPages[i * 2]})`);
+                pageDiv.append(leftPage);
+            }
+            
+            if (pdfPages[i * 2 + 1]) {
+                const rightPage = $('<div class="page-content"></div>');
+                rightPage.css('background-image', `url(${pdfPages[i * 2 + 1]})`);
+                pageDiv.append(rightPage);
+            }
+            
+            flipbook.append(pageDiv);
+        }
+        
+        if (typeof $.fn.turn !== 'undefined') {
+            flipbook.turn({
+                width: flipbook.width(),
+                height: flipbook.height(),
+                autoCenter: true,
+                gradients: true,
+                elevation: 50
+            });
+            
+            flipbook.bind('turned', function(event, page) {
+                currentPage = page;
+                updatePageInfo();
+            });
+        } else {
+            showSimplePages(flipbook);
+        }
+        
+        setupZoomAndPan(flipbook);
+    }
+    
+    function showSimplePages(flipbook) {
+        flipbook.find('.flipbook-page').hide();
+        flipbook.find('.flipbook-page').eq(0).show();
+        
+        currentPage = 1;
         updatePageInfo();
     }
     
-    function makeResponsive($flipbook) {
-        var $container = $flipbook.parent();
-        var containerWidth = $container.width();
-        var containerHeight = $flipbook.data('original-height') || $flipbook.height();
+    function setupZoomAndPan(flipbook) {
+        const page = flipbook.find('.page-content').first();
         
-        // Store original height if not stored
-        if (!$flipbook.data('original-height')) {
-            $flipbook.data('original-height', containerHeight);
-        }
-        
-        // Calculate new dimensions maintaining aspect ratio
-        var aspectRatio = containerHeight / containerWidth;
-        var newWidth = Math.min(containerWidth, 800);
-        var newHeight = newWidth * aspectRatio;
-        
-        // Update flipbook size
-        if ($flipbook.turn('is')) {
-            $flipbook.turn('size', newWidth, newHeight);
-        }
-    }
-    
-    // Add keyboard navigation
-    $(document).keydown(function(e) {
-        if ($('.menu-flipbook:visible').length > 0) {
-            var $activeFlipbook = $('.menu-flipbook:visible').first();
-            
-            switch(e.which) {
-                case 37: // Left arrow
-                    e.preventDefault();
-                    $activeFlipbook.turn('previous');
-                    break;
-                case 39: // Right arrow
-                    e.preventDefault();
-                    $activeFlipbook.turn('next');
-                    break;
+        page.on('mousedown', function(e) {
+            if (zoomLevel > 1) {
+                isDragging = true;
+                startX = e.pageX - page.offset().left;
+                startY = e.pageY - page.offset().top;
+                scrollLeft = page.scrollLeft();
+                scrollTop = page.scrollTop();
             }
+        });
+        
+        $(document).on('mousemove', function(e) {
+            if (!isDragging) return;
+            e.preventDefault();
+            const x = e.pageX - page.offset().left;
+            const y = e.pageY - page.offset().top;
+            const walkX = (x - startX) * 2;
+            const walkY = (y - startY) * 2;
+            page.scrollLeft(scrollLeft - walkX);
+            page.scrollTop(scrollTop - walkY);
+        });
+        
+        $(document).on('mouseup', function() {
+            isDragging = false;
+        });
+        
+        page.on('wheel', function(e) {
+            e.preventDefault();
+            if (e.originalEvent.deltaY < 0) {
+                zoomIn();
+            } else {
+                zoomOut();
+            }
+        });
+    }
+    
+    function updatePageInfo() {
+        $('#current-page').text(currentPage);
+        $('#total-pages').text(Math.ceil(totalPages / 2));
+        
+        $('#prev-page').prop('disabled', currentPage <= 1);
+        $('#next-page').prop('disabled', currentPage >= Math.ceil(totalPages / 2));
+    }
+    
+    function zoomIn() {
+        if (zoomLevel < 3) {
+            zoomLevel += 0.2;
+            applyZoom();
         }
-    });
-    
-    // Add touch/swipe support for mobile
-    if ('ontouchstart' in window) {
-        $('.menu-flipbook').each(function() {
-            var $flipbook = $(this);
-            var startX = 0;
-            var startY = 0;
-            
-            $flipbook.on('touchstart', function(e) {
-                startX = e.originalEvent.touches[0].clientX;
-                startY = e.originalEvent.touches[0].clientY;
-            });
-            
-            $flipbook.on('touchend', function(e) {
-                var endX = e.originalEvent.changedTouches[0].clientX;
-                var endY = e.originalEvent.changedTouches[0].clientY;
-                
-                var deltaX = endX - startX;
-                var deltaY = endY - startY;
-                
-                // Check if horizontal swipe
-                if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 50) {
-                    if (deltaX > 0) {
-                        // Swipe right - previous page
-                        $flipbook.turn('previous');
-                    } else {
-                        // Swipe left - next page
-                        $flipbook.turn('next');
-                    }
-                }
-            });
-        });
     }
     
-    // Add fullscreen functionality
-    function addFullscreenButton($flipbook) {
-        var $container = $flipbook.parent();
-        var $fullscreenBtn = $('<button class="flipbook-fullscreen" title="Schermo intero">⛶</button>');
-        
-        $container.append($fullscreenBtn);
-        
-        $fullscreenBtn.click(function() {
-            toggleFullscreen($container[0]);
-        });
+    function zoomOut() {
+        if (zoomLevel > 0.5) {
+            zoomLevel -= 0.2;
+            applyZoom();
+        }
     }
     
-    function toggleFullscreen(element) {
+    function applyZoom() {
+        $('.page-content').css('transform', `scale(${zoomLevel})`);
+        $('.page-content').toggleClass('zoomed', zoomLevel > 1);
+    }
+    
+    function goToPage(pageNum) {
+        const flipbook = $('#menu-flipbook');
+        
+        if (typeof flipbook.turn === 'function') {
+            flipbook.turn('page', pageNum);
+        } else {
+            flipbook.find('.flipbook-page').hide();
+            flipbook.find('.flipbook-page').eq(pageNum - 1).show();
+            currentPage = pageNum;
+            updatePageInfo();
+        }
+    }
+    
+    function toggleFullscreen() {
+        const container = $('.menu-viewer-container').get(0);
+        
         if (!document.fullscreenElement) {
-            element.requestFullscreen().catch(err => {
-                // Fullscreen error handled silently
+            container.requestFullscreen().catch(err => {
+                console.log('Fullscreen non supportato:', err);
             });
         } else {
             document.exitFullscreen();
         }
     }
     
-    // Add fullscreen buttons to all flipbooks
-    $('.menu-flipbook').each(function() {
-        if (document.fullscreenEnabled) {
-            addFullscreenButton($(this));
+    $('#prev-page').on('click', function() {
+        if (currentPage > 1) {
+            goToPage(currentPage - 1);
         }
     });
     
-    // Handle fullscreen changes
-    document.addEventListener('fullscreenchange', function() {
-        $('.menu-flipbook').each(function() {
-            makeResponsive($(this));
-        });
+    $('#next-page').on('click', function() {
+        if (currentPage < Math.ceil(totalPages / 2)) {
+            goToPage(currentPage + 1);
+        }
+    });
+    
+    $('#zoom-in').on('click', zoomIn);
+    $('#zoom-out').on('click', zoomOut);
+    $('#fullscreen').on('click', toggleFullscreen);
+    
+    $(document).on('keydown', function(e) {
+        switch(e.keyCode) {
+            case 37: // Freccia sinistra
+                $('#prev-page').click();
+                break;
+            case 39: // Freccia destra
+                $('#next-page').click();
+                break;
+            case 187: // +
+                if (e.ctrlKey) {
+                    e.preventDefault();
+                    zoomIn();
+                }
+                break;
+            case 189: // -
+                if (e.ctrlKey) {
+                    e.preventDefault();
+                    zoomOut();
+                }
+                break;
+            case 70: // F
+                if (e.ctrlKey) {
+                    e.preventDefault();
+                    toggleFullscreen();
+                }
+                break;
+        }
+    });
+    
+    $(window).on('resize', function() {
+        if ($('#menu-flipbook').data('turn')) {
+            $('#menu-flipbook').turn('resize');
+        }
     });
 });

@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Menu Manager
- * Description: Plugin per la gestione del menù di un ristorante con visualizzazione a pagine sfogliabili
- * Version: 0.1.4
+ * Description: Plugin per la gestione avanzata del menu ristorante con widget Elementor e visualizzazione PDF sfogliabile
+ * Version: 0.2.5
  * Author: SilverStudioDM
  */
 
@@ -10,277 +10,350 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('MENU_MANAGER_PATH', plugin_dir_path(__FILE__));
 define('MENU_MANAGER_URL', plugin_dir_url(__FILE__));
+define('MENU_MANAGER_PATH', plugin_dir_path(__FILE__));
 
 class MenuManager {
     
     public function __construct() {
         add_action('init', array($this, 'init'));
+        add_action('admin_menu', array($this, 'admin_menu'));
         add_action('wp_enqueue_scripts', array($this, 'enqueue_scripts'));
         add_action('admin_enqueue_scripts', array($this, 'admin_enqueue_scripts'));
-        add_action('admin_menu', array($this, 'add_admin_menu'));
-        add_action('wp_ajax_save_menu_settings', array($this, 'save_menu_settings'));
-        add_action('wp_ajax_upload_pdf', array($this, 'upload_pdf'));
-        add_action('wp_ajax_generate_pdf', array($this, 'generate_pdf'));
+        add_action('wp_ajax_upload_menu', array($this, 'handle_upload'));
+        add_action('wp_ajax_save_menu_config', array($this, 'save_menu_config'));
         add_action('wp_ajax_delete_menu', array($this, 'delete_menu'));
-        add_action('wp_ajax_delete_pdf', array($this, 'delete_pdf'));
+        add_action('wp_ajax_get_menu_data', array($this, 'get_menu_data'));
         add_action('elementor/widgets/widgets_registered', array($this, 'register_elementor_widget'));
-        
+        add_action('plugins_loaded', array($this, 'load_textdomain'));
         register_activation_hook(__FILE__, array($this, 'activate'));
         register_deactivation_hook(__FILE__, array($this, 'deactivate'));
     }
     
     public function init() {
         $this->create_tables();
+        $this->create_upload_dir();
     }
     
-    public function enqueue_scripts() {
-        wp_enqueue_script('turn-js', MENU_MANAGER_URL . 'assets/js/turn.min.js', array('jquery'), '1.0.0', true);
-        wp_enqueue_script('menu-manager-frontend', MENU_MANAGER_URL . 'assets/js/frontend.js', array('jquery', 'turn-js'), '1.0.0', true);
-        wp_enqueue_style('menu-manager-frontend', MENU_MANAGER_URL . 'assets/css/frontend.css', array(), '1.0.0');
+    public function activate() {
+        $this->create_tables();
+        $this->create_upload_dir();
+        flush_rewrite_rules();
     }
     
-    public function admin_enqueue_scripts($hook) {
-        if (strpos($hook, 'menu-manager') !== false) {
-            wp_enqueue_media();
-            wp_enqueue_script('menu-manager-admin', MENU_MANAGER_URL . 'assets/js/admin.js', array('jquery', 'wp-color-picker'), '1.0.0', true);
-            wp_enqueue_style('wp-color-picker');
-            wp_enqueue_style('menu-manager-admin', MENU_MANAGER_URL . 'assets/css/admin.css', array(), '1.0.0');
+    public function deactivate() {
+        flush_rewrite_rules();
+    }
+    
+    public function load_textdomain() {
+        load_plugin_textdomain('menu-manager', false, dirname(plugin_basename(__FILE__)) . '/languages');
+    }
+    
+    private function create_upload_dir() {
+        $upload_dir = wp_upload_dir();
+        $menu_dir = $upload_dir['basedir'] . '/menu-manager';
+        
+        if (!file_exists($menu_dir)) {
+            wp_mkdir_p($menu_dir);
             
-            wp_localize_script('menu-manager-admin', 'menuManagerAjax', array(
-                'ajaxurl' => admin_url('admin-ajax.php'),
-                'nonce' => wp_create_nonce('menu_manager_nonce')
-            ));
+            $htaccess_content = "Options -Indexes\n";
+            $htaccess_content .= "<Files *.pdf>\n";
+            $htaccess_content .= "ForceType application/octet-stream\n";
+            $htaccess_content .= "Header set Content-Disposition attachment\n";
+            $htaccess_content .= "</Files>\n";
+            
+            file_put_contents($menu_dir . '/.htaccess', $htaccess_content);
         }
     }
     
-    public function add_admin_menu() {
-        add_menu_page(
-            'Menu Manager',
-            'Menu Manager',
-            'manage_options',
-            'menu-manager',
-            array($this, 'admin_page'),
-            'dashicons-book-alt',
-            30
-        );
-    }
-    
-    public function admin_page() {
-        include MENU_MANAGER_PATH . 'admin/admin-page.php';
-    }
-    
-    public function create_tables() {
+    private function create_tables() {
         global $wpdb;
         
-        $table_name = $wpdb->prefix . 'menu_manager_menus';
+        $table_name = $wpdb->prefix . 'menu_manager';
         
         $charset_collate = $wpdb->get_charset_collate();
         
         $sql = "CREATE TABLE $table_name (
             id mediumint(9) NOT NULL AUTO_INCREMENT,
             name varchar(255) NOT NULL,
-            type enum('custom','pdf') NOT NULL DEFAULT 'custom',
-            pdf_url varchar(500) DEFAULT NULL,
-            custom_content longtext DEFAULT NULL,
-            settings longtext DEFAULT NULL,
+            pdf_url varchar(500) NOT NULL,
+            start_date datetime DEFAULT NULL,
+            end_date datetime DEFAULT NULL,
+            user_roles text DEFAULT NULL,
+            is_active tinyint(1) DEFAULT 1,
+            priority int(11) DEFAULT 0,
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            PRIMARY KEY (id)
+            PRIMARY KEY (id),
+            KEY idx_active_priority (is_active, priority),
+            KEY idx_dates (start_date, end_date)
         ) $charset_collate;";
         
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
         dbDelta($sql);
     }
     
-    public function save_menu_settings() {
-        check_ajax_referer('menu_manager_nonce', 'nonce');
-        
-        global $wpdb;
-        $table_name = $wpdb->prefix . 'menu_manager_menus';
-        
-        $menu_id = intval($_POST['menu_id']);
-        $name = sanitize_text_field($_POST['name']);
-        $type = sanitize_text_field($_POST['type']);
-        $settings = wp_json_encode($_POST['settings']);
-        $custom_content = wp_kses_post($_POST['custom_content']);
-        
-        if ($menu_id > 0) {
-            $wpdb->update(
-                $table_name,
-                array(
-                    'name' => $name,
-                    'type' => $type,
-                    'custom_content' => $custom_content,
-                    'settings' => $settings
-                ),
-                array('id' => $menu_id)
-            );
-        } else {
-            $wpdb->insert(
-                $table_name,
-                array(
-                    'name' => $name,
-                    'type' => $type,
-                    'custom_content' => $custom_content,
-                    'settings' => $settings
-                )
-            );
-            $menu_id = $wpdb->insert_id;
-        }
-        
-        wp_send_json_success(array('menu_id' => $menu_id));
-    }
-    
-    public function upload_pdf() {
-        check_ajax_referer('menu_manager_nonce', 'nonce');
-        
-        if (!function_exists('wp_handle_upload')) {
-            require_once(ABSPATH . 'wp-admin/includes/file.php');
-        }
-        
-        $uploaded_file = wp_handle_upload($_FILES['pdf_file'], array('test_form' => false));
-        
-        if (isset($uploaded_file['error'])) {
-            wp_send_json_error($uploaded_file['error']);
-        }
-        
-        global $wpdb;
-        $table_name = $wpdb->prefix . 'menu_manager_menus';
-        $menu_id = intval($_POST['menu_id']);
-        
-        $wpdb->update(
-            $table_name,
-            array('pdf_url' => $uploaded_file['url']),
-            array('id' => $menu_id)
+    public function admin_menu() {
+        add_menu_page(
+            'Menu Manager',
+            'Menu Manager', 
+            'manage_options',
+            'menu-manager',
+            array($this, 'admin_page'),
+            'dashicons-food',
+            30
         );
-        
-        wp_send_json_success(array('pdf_url' => $uploaded_file['url']));
     }
     
-    public function generate_pdf() {
-        check_ajax_referer('menu_manager_nonce', 'nonce');
+    public function enqueue_scripts() {
+        wp_enqueue_script('pdf-js', 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js', array(), '2.11.338', true);
+        wp_enqueue_script('turn-js', MENU_MANAGER_URL . 'assets/js/turn.min.js', array('jquery'), '1.0.0', true);
+        wp_enqueue_script('menu-manager-frontend', MENU_MANAGER_URL . 'assets/js/frontend.js', array('jquery', 'pdf-js', 'turn-js'), '1.0.0', true);
+        wp_enqueue_style('menu-manager-frontend', MENU_MANAGER_URL . 'assets/css/frontend.css', array(), '1.0.0');
         
-        require_once MENU_MANAGER_PATH . 'includes/pdf-generator.php';
+        wp_localize_script('menu-manager-frontend', 'menuManager', array(
+            'ajax_url' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('menu_manager_nonce'),
+            'pdf_worker' => 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.worker.min.js'
+        ));
+    }
+    
+    public function admin_enqueue_scripts($hook) {
+        if ($hook !== 'toplevel_page_menu-manager') return;
         
-        $menu_id = intval($_POST['menu_id']);
-        $generator = new MenuPDFGenerator();
-        $pdf_url = $generator->generate($menu_id);
+        wp_enqueue_media();
+        wp_enqueue_script('menu-manager-admin', MENU_MANAGER_URL . 'assets/js/admin.js', array('jquery'), '1.0.0', true);
+        wp_enqueue_style('menu-manager-admin', MENU_MANAGER_URL . 'assets/css/admin.css', array(), '1.0.0');
         
-        if ($pdf_url) {
-            wp_send_json_success(array('pdf_url' => $pdf_url));
+        wp_localize_script('menu-manager-admin', 'menuManagerAdmin', array(
+            'ajax_url' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('menu_manager_admin_nonce')
+        ));
+    }
+    
+    public function admin_page() {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'menu_manager';
+        $menus = $wpdb->get_results("SELECT * FROM $table_name ORDER BY priority DESC, created_at DESC");
+        
+        $admin_template = MENU_MANAGER_PATH . 'templates/admin-page.php';
+        if (file_exists($admin_template)) {
+            include $admin_template;
         } else {
-            wp_send_json_error('Errore nella generazione del PDF');
+            echo '<div class="wrap"><h1>Menu Manager</h1><p>Template admin non trovato. Controlla la struttura delle cartelle.</p></div>';
         }
     }
     
-    public function delete_menu() {
-        check_ajax_referer('menu_manager_nonce', 'nonce');
+    public function handle_upload() {
+        check_ajax_referer('menu_manager_admin_nonce', 'nonce');
         
         if (!current_user_can('manage_options')) {
-            wp_send_json_error('Permessi insufficienti');
+            wp_die('Unauthorized');
+        }
+        
+        if (!isset($_FILES['pdf_file'])) {
+            wp_send_json_error('Nessun file ricevuto');
+        }
+        
+        $uploaded_file = $_FILES['pdf_file'];
+        
+        if ($uploaded_file['error'] !== UPLOAD_ERR_OK) {
+            wp_send_json_error('Errore nel caricamento del file');
+        }
+        
+        if ($uploaded_file['type'] !== 'application/pdf') {
+            wp_send_json_error('Solo file PDF sono permessi');
+        }
+        
+        $max_size = 10 * 1024 * 1024; // 10MB
+        if ($uploaded_file['size'] > $max_size) {
+            wp_send_json_error('Il file è troppo grande. Massimo 10MB.');
+        }
+        
+        add_filter('upload_dir', array($this, 'custom_upload_dir'));
+        $upload = wp_handle_upload($uploaded_file, array('test_form' => false));
+        remove_filter('upload_dir', array($this, 'custom_upload_dir'));
+        
+        if (isset($upload['error'])) {
+            wp_send_json_error($upload['error']);
+        }
+        
+        wp_send_json_success(array('url' => $upload['url']));
+    }
+    
+    public function custom_upload_dir($dir) {
+        return array(
+            'path'   => $dir['basedir'] . '/menu-manager',
+            'url'    => $dir['baseurl'] . '/menu-manager',
+            'subdir' => '/menu-manager',
+        ) + $dir;
+    }
+    
+    public function save_menu_config() {
+        check_ajax_referer('menu_manager_admin_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_die('Unauthorized');
         }
         
         global $wpdb;
-        $table_name = $wpdb->prefix . 'menu_manager_menus';
-        $menu_id = intval($_POST['menu_id']);
+        $table_name = $wpdb->prefix . 'menu_manager';
         
-        // Get menu data to delete associated files
+        $name = sanitize_text_field($_POST['name']);
+        $pdf_url = esc_url_raw($_POST['pdf_url']);
+        $start_date = $_POST['start_date'] ? sanitize_text_field($_POST['start_date']) : null;
+        $end_date = $_POST['end_date'] ? sanitize_text_field($_POST['end_date']) : null;
+        $user_roles = isset($_POST['user_roles']) ? implode(',', array_map('sanitize_text_field', $_POST['user_roles'])) : '';
+        $is_active = isset($_POST['is_active']) ? 1 : 0;
+        $priority = isset($_POST['priority']) ? intval($_POST['priority']) : 0;
+        
+        if (empty($name) || empty($pdf_url)) {
+            wp_send_json_error('Nome e PDF sono obbligatori');
+        }
+        
+        $data = array(
+            'name' => $name,
+            'pdf_url' => $pdf_url,
+            'start_date' => $start_date,
+            'end_date' => $end_date,
+            'user_roles' => $user_roles,
+            'is_active' => $is_active,
+            'priority' => $priority
+        );
+        
+        if (isset($_POST['menu_id']) && $_POST['menu_id']) {
+            $result = $wpdb->update(
+                $table_name,
+                $data,
+                array('id' => intval($_POST['menu_id']))
+            );
+        } else {
+            $result = $wpdb->insert($table_name, $data);
+        }
+        
+        if ($result !== false) {
+            wp_send_json_success('Menu salvato con successo');
+        } else {
+            wp_send_json_error('Errore nel salvare il menu');
+        }
+    }
+    
+    public function get_menu_data() {
+        check_ajax_referer('menu_manager_admin_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_die('Unauthorized');
+        }
+        
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'menu_manager';
+        
+        $menu_id = intval($_POST['menu_id']);
         $menu = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_name WHERE id = %d", $menu_id));
         
         if ($menu) {
-            // Delete PDF file if exists
-            if ($menu->pdf_url) {
-                $this->delete_file_from_url($menu->pdf_url);
-            }
-            
-            // Delete from database
-            $deleted = $wpdb->delete($table_name, array('id' => $menu_id), array('%d'));
-            
-            if ($deleted) {
-                wp_send_json_success();
-            } else {
-                wp_send_json_error('Errore nell\'eliminazione dal database');
-            }
+            wp_send_json_success($menu);
         } else {
             wp_send_json_error('Menu non trovato');
         }
     }
     
-    public function delete_pdf() {
-        check_ajax_referer('menu_manager_nonce', 'nonce');
+    public function delete_menu() {
+        check_ajax_referer('menu_manager_admin_nonce', 'nonce');
         
         if (!current_user_can('manage_options')) {
-            wp_send_json_error('Permessi insufficienti');
+            wp_die('Unauthorized');
         }
         
         global $wpdb;
-        $table_name = $wpdb->prefix . 'menu_manager_menus';
+        $table_name = $wpdb->prefix . 'menu_manager';
+        
         $menu_id = intval($_POST['menu_id']);
-        $pdf_url = esc_url_raw($_POST['pdf_url']);
         
-        // Delete physical file
-        if ($this->delete_file_from_url($pdf_url)) {
-            // Update database
-            $updated = $wpdb->update(
-                $table_name,
-                array('pdf_url' => null),
-                array('id' => $menu_id),
-                array('%s'),
-                array('%d')
-            );
-            
-            if ($updated !== false) {
-                wp_send_json_success();
-            } else {
-                wp_send_json_error('Errore nell\'aggiornamento del database');
+        $menu = $wpdb->get_row($wpdb->prepare("SELECT pdf_url FROM $table_name WHERE id = %d", $menu_id));
+        
+        if ($menu && $menu->pdf_url) {
+            $file_path = str_replace(wp_upload_dir()['baseurl'], wp_upload_dir()['basedir'], $menu->pdf_url);
+            if (file_exists($file_path)) {
+                unlink($file_path);
             }
+        }
+        
+        $result = $wpdb->delete($table_name, array('id' => $menu_id));
+        
+        if ($result !== false) {
+            wp_send_json_success('Menu eliminato');
         } else {
-            wp_send_json_error('Errore nell\'eliminazione del file');
+            wp_send_json_error('Errore nell\'eliminare il menu');
         }
-    }
-    
-    private function delete_file_from_url($file_url) {
-        $upload_dir = wp_upload_dir();
-        $file_path = str_replace($upload_dir['baseurl'], $upload_dir['basedir'], $file_url);
-        
-        if (file_exists($file_path)) {
-            return unlink($file_path);
-        }
-        
-        return true; // File doesn't exist, consider it "deleted"
     }
     
     public function register_elementor_widget() {
-        require_once MENU_MANAGER_PATH . 'elementor/menu-widget.php';
-        \Elementor\Plugin::instance()->widgets_manager->register_widget_type(new \MenuManagerElementorWidget());
-    }
-    
-    public function activate() {
-        $this->create_tables();
+        if (!did_action('elementor/loaded')) {
+            return;
+        }
         
-        $upload_dir = wp_upload_dir();
-        $menu_dir = $upload_dir['basedir'] . '/menu-manager';
-        if (!file_exists($menu_dir)) {
-            wp_mkdir_p($menu_dir);
+        $widget_file = MENU_MANAGER_PATH . 'widgets/elementor-menu-widget.php';
+        if (file_exists($widget_file)) {
+            require_once $widget_file;
+            \Elementor\Plugin::instance()->widgets_manager->register_widget_type(new \MenuManager_Elementor_Widget());
         }
     }
     
-    public function deactivate() {
-        // Cleanup se necessario
+    public function get_active_menu() {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'menu_manager';
+        
+        $current_time = current_time('mysql');
+        $current_user = wp_get_current_user();
+        $user_roles = $current_user->roles;
+        
+        $query = "SELECT * FROM $table_name WHERE is_active = 1";
+        
+        if (!current_user_can('administrator')) {
+            $query .= " AND (start_date IS NULL OR start_date <= '$current_time')";
+            $query .= " AND (end_date IS NULL OR end_date >= '$current_time')";
+        }
+        
+        $query .= " ORDER BY priority DESC, created_at DESC";
+        
+        $menus = $wpdb->get_results($query);
+        
+        foreach ($menus as $menu) {
+            if (empty($menu->user_roles)) {
+                return $menu;
+            }
+            
+            $allowed_roles = explode(',', $menu->user_roles);
+            $has_permission = false;
+            
+            foreach ($user_roles as $role) {
+                if (in_array(trim($role), array_map('trim', $allowed_roles))) {
+                    $has_permission = true;
+                    break;
+                }
+            }
+            
+            if ($has_permission || current_user_can('administrator')) {
+                return $menu;
+            }
+        }
+        
+        return null;
     }
     
-    public static function get_menus() {
+    public function get_all_active_menus() {
         global $wpdb;
-        $table_name = $wpdb->prefix . 'menu_manager_menus';
-        return $wpdb->get_results("SELECT * FROM $table_name ORDER BY updated_at DESC");
-    }
-    
-    public static function get_menu($id) {
-        global $wpdb;
-        $table_name = $wpdb->prefix . 'menu_manager_menus';
-        return $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_name WHERE id = %d", $id));
+        $table_name = $wpdb->prefix . 'menu_manager';
+        
+        $current_time = current_time('mysql');
+        
+        $query = "SELECT * FROM $table_name WHERE is_active = 1";
+        $query .= " AND (start_date IS NULL OR start_date <= '$current_time')";
+        $query .= " AND (end_date IS NULL OR end_date >= '$current_time')";
+        $query .= " ORDER BY priority DESC, created_at DESC";
+        
+        return $wpdb->get_results($query);
     }
 }
 
